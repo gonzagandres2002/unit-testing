@@ -1,0 +1,70 @@
+.screener {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+h1 {
+  margin-bottom: 0.25rem;
+}
+
+.subtitle {
+  color: #666;
+  margin-top: 0;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: #444;
+}
+
+.controls input,
+.controls select {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.95rem;
+  min-width: 10rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #e3e3e3;
+}
+
+th.num,
+td.num {
+  text-align: right;
+}
+
+thead th {
+  border-bottom: 2px solid #999;
+}
+
+.error {
+  color: #b00020;
+  background: #fdecea;
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+}
+
+.status {
+  color: #666;
+}

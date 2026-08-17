@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: stocklens
+
+stocklens:
+  finnhub:
+    base-url: https://finnhub.io/api/v1
+    # Get a free key at https://finnhub.io/register and export FINNHUB_API_KEY.
+    # The key must never be exposed to the frontend; only this backend uses it.
+    api-key: ${FINNHUB_API_KEY:}
+    connect-timeout: 3s
+    read-timeout: 5s
+  screener:
+    # How long a fetched snapshot is served before refreshing from Finnhub.
+    cache-ttl: 10m
+    # 18 tickers x 3 endpoints = 54 calls per refresh, below Finnhub's 60/min limit.
+    tickers:
+      - AAPL
+      - MSFT
+      - GOOGL
+      - AMZN
+      - NVDA
+      - META
+      - TSLA
+      - JPM
+      - V
+      - JNJ
+      - XOM
+      - WMT
+      - PG
+      - KO
+      - HD
+      - MCD
+      - DIS
+      - NFLX

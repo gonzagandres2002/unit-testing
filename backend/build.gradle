@@ -1,5 +1,6 @@
 plugins {
 	id 'java'
+	id 'jacoco'
 	id 'org.springframework.boot' version '4.1.0'
 	id 'io.spring.dependency-management' version '1.1.7'
 }
@@ -17,9 +18,24 @@ repositories {
 	mavenCentral()
 }
 
+ext {
+	// springdoc 3.x is the Spring Boot 4 line; 2.x targets Boot 3.
+	springdocVersion = '3.1.0'
+	// Feeds Javadoc into the generated OpenAPI descriptions.
+	therapiVersion = '0.15.0'
+}
+
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+	// Serves the generated spec at /v3/api-docs and Swagger UI at /swagger-ui.html.
+	implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:${springdocVersion}"
+	// Lets springdoc read Javadoc at runtime, so the comments on the controller
+	// and on Stock become the descriptions in the spec instead of being duplicated
+	// into @Schema/@Operation annotations.
+	implementation "com.github.therapi:therapi-runtime-javadoc:${therapiVersion}"
+	annotationProcessor "com.github.therapi:therapi-runtime-javadoc-scribe:${therapiVersion}"
 
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
@@ -29,4 +45,55 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	// Coverage is only useful if it is never stale, so every test run refreshes it.
+	finalizedBy tasks.named('jacocoTestReport')
+}
+
+jacoco {
+	toolVersion = '0.8.15'
+}
+
+// Coverage report:  build/reports/jacoco/test/html/index.html
+tasks.named('jacocoTestReport') {
+	dependsOn tasks.named('test')
+	reports {
+		html.required = true
+		xml.required = true   // for CI tools; harmless locally
+		csv.required = false
+	}
+	classDirectories.setFrom(files(classDirectories.files.collect {
+		fileTree(dir: it, exclude: [
+			// Framework wiring with no branches to get wrong: excluded so the
+			// percentage reflects logic that can actually be tested, not the
+			// boilerplate that only proves the app starts.
+			'com/stocklens/StocklensApplication.class',
+			'com/stocklens/config/**',
+		])
+	}))
+}
+
+// Refresh docs/openapi.yaml from the application itself:
+//
+//     ./gradlew exportOpenApiSpec
+//
+// OpenApiDocsTest asks the running context for /v3/api-docs.yaml and writes it
+// to build/openapi/; this copies it into docs/. The committed spec is therefore
+// generated output — edit the controller or its Javadoc, not the YAML.
+tasks.register('exportOpenApiSpec', Copy) {
+	group = 'documentation'
+	description = 'Regenerates docs/openapi.yaml from the live OpenAPI endpoint.'
+	dependsOn tasks.named('test')
+	from layout.buildDirectory.dir('openapi')
+	include 'openapi.yaml'
+	into file('../docs')
+
+	doLast {
+		def spec = file('../docs/openapi.yaml')
+		spec.text = '''\
+# GENERATED FILE — do not edit by hand; your changes will be overwritten.
+#
+# Regenerate:  cd backend && ./gradlew exportOpenApiSpec
+# Source:      StockController (+ its Javadoc), Stock, OpenApiConfig
+''' + spec.text
+	}
 }

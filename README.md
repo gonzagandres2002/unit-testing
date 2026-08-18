@@ -10,7 +10,53 @@ P/E and market cap, sort by a financial metric.
   [`docs/API-RESEARCH.md`](docs/API-RESEARCH.md) for the comparison of six APIs and
   why Finnhub was selected
 
+## Documentation
+
+| Document | For |
+| --- | --- |
+| [`docs/FUNDAMENTALS.md`](docs/FUNDAMENTALS.md) | **Learning the concepts** — layered architecture, controllers, services, providers, DTOs, dependency injection |
+| [`docs/TESTING.md`](docs/TESTING.md) | **Testing** — AAA pattern, unit vs integration, performance, coverage |
+| [`docs/API.md`](docs/API.md) | Using the REST API — endpoints, parameters, error catalog, config |
+| **http://localhost:8080/swagger-ui.html** | Interactive API docs — browse and call the endpoints while the app runs |
+| [`docs/openapi.yaml`](docs/openapi.yaml) | The same contract, machine-readable. **Generated** — refresh with `./gradlew exportOpenApiSpec` |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Changing the backend — layers, request flow, per-component notes, how to extend |
+| [`docs/adr/`](docs/adr/) | Why the design is what it is — six decision records |
+| [`docs/API-RESEARCH.md`](docs/API-RESEARCH.md) | Evidence behind the provider choice |
+
+With the backend running, the API documents itself:
+
+| URL | What |
+| --- | --- |
+| `/swagger-ui.html` | Swagger UI — the readable, clickable version |
+| `/v3/api-docs` | The OpenAPI 3.1 spec as JSON |
+| `/v3/api-docs.yaml` | The same spec as YAML |
+
+Both are generated from the controller and its Javadoc by
+[springdoc-openapi](https://springdoc.org), so they cannot drift from the code.
+Set `springdoc.api-docs.enabled` and `springdoc.swagger-ui.enabled` to `false`
+in a public deployment — Swagger UI is a live request console.
+
+Javadoc on the public API is generated with `cd backend && ./gradlew javadoc`
+(output in `backend/build/docs/javadoc/index.html`).
+
 ## Running it
+
+### 0. Java
+
+The backend needs JDK 21+. On macOS with Homebrew (`brew install openjdk`), the JDK
+is not added to the PATH automatically; either add to your shell profile:
+
+```bash
+export JAVA_HOME="/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home"
+export PATH="$JAVA_HOME/bin:$PATH"
+```
+
+or register it system-wide once (then `java` works everywhere, including GUI apps):
+
+```bash
+sudo ln -sfn /opt/homebrew/opt/openjdk/libexec/openjdk.jdk \
+  /Library/Java/JavaVirtualMachines/openjdk.jdk
+```
 
 ### 1. Backend
 
@@ -40,8 +86,12 @@ the client.
 
 ```bash
 cd backend
-./gradlew test             # 52 tests, no network access, external API fully mocked
+./gradlew test             # 57 tests, no network access, external API fully mocked
+open build/reports/jacoco/test/html/index.html   # coverage: 97.5% instruction, 86.5% branch
 ```
+
+See [`docs/TESTING.md`](docs/TESTING.md) for the concepts and what the coverage
+report currently flags as untested.
 
 ## REST API
 
@@ -70,9 +120,10 @@ FinnhubStockProvider     — RestClient, timeouts, typed failures (429 vs. rest)
 Finnhub REST API         — /stock/profile2, /quote, /stock/metric
 ```
 
-Key decisions:
+Key decisions — summarised here, with the full context and trade-offs in
+[`docs/adr/`](docs/adr/):
 
-- **No database.** The screener shows a *current* snapshot of 18 large-cap
+- **No database** ([ADR-001](docs/adr/0001-no-database.md)). The screener shows a *current* snapshot of 18 large-cap
   companies (configurable in `application.yml`); the natural store for that is an
   in-memory cache with a 10-minute TTL. PostgreSQL would add schema, migrations and
   container setup while providing nothing the MVP uses — no history, no
@@ -81,12 +132,15 @@ Key decisions:
   don't share a cache. When persistence becomes useful (watchlists, historical
   charts), a `Repository` slots in behind `StockService` without touching the web
   layer.
-- **Provider abstraction.** `FinancialDataProvider` is one small interface; a
-  second data source is a new implementation, not a rewrite.
-- **Graceful degradation.** Per-ticker failures are skipped; a rate limit aborts
-  the refresh (retrying every remaining ticker would only burn quota); any failed
-  refresh serves the previous snapshot; only a cold cache with a failing provider
-  produces a 503.
+- **Provider abstraction** ([ADR-002](docs/adr/0002-provider-abstraction.md)).
+  `FinancialDataProvider` is one small interface; a second data source is a new
+  implementation, not a rewrite.
+- **Graceful degradation** ([ADR-003](docs/adr/0003-graceful-degradation.md)).
+  Per-ticker failures are skipped; a rate limit aborts the refresh (retrying every
+  remaining ticker would only burn quota); any failed refresh serves the previous
+  snapshot; only a cold cache with a failing provider produces a 503.
+- **Injected `Clock`** ([ADR-004](docs/adr/0004-inject-clock.md)). Time is a
+  dependency, so a 10-minute TTL is tested in microseconds without sleeping.
 - **Quota discipline.** One refresh = 3 calls × 18 tickers = 54 calls, under
   Finnhub's 60/minute. The TTL keeps steady-state usage ≈ 5.4 calls/minute, and
   automated tests never touch the real API.
@@ -99,6 +153,7 @@ Key decisions:
 | API client | `FinnhubStockProviderTest` (10) | Local MockWebServer; success mapping, unknown ticker, HTTP 500, HTTP 429, timeout, invalid JSON, missing fields, missing API key fails fast |
 | Web layer | `StockControllerTest` (11) | `@WebMvcTest` with mocked service; JSON contract, defaults, validation (negative/zero/non-numeric filters, bad sort field, malformed ticker), 404/503 mapping |
 | Integration | `StockScreenerIntegrationTest` (3) | `@SpringBootTest` + MockMvc, only the provider mocked; full HTTP→controller→service flow incl. cold-cache outage → 503 |
+| API docs | `OpenApiDocsTest` (5) | `@SpringBootTest`; both endpoints present in the generated spec, error responses attached, descriptions populated from Javadoc, Swagger UI reachable |
 
 Testcontainers was deliberately not used: there is no database, so it would be
 technology for its own sake.

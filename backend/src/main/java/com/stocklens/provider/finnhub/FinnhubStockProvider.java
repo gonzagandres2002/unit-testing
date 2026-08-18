@@ -45,6 +45,18 @@ public class FinnhubStockProvider implements FinancialDataProvider {
 		this.clock = clock;
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>Costs up to <strong>three</strong> Finnhub calls, issued in series
+	 * and short-circuited as early as possible to protect the 60/minute free
+	 * tier: a missing API key spends none, an unknown ticker spends one, a
+	 * delisted ticker spends two.
+	 *
+	 * <p>The two "unknown ticker" checks below are quirks of Finnhub rather
+	 * than general HTTP: it answers an unrecognised symbol with {@code 200 OK}
+	 * and an empty object or an all-zero quote, never a {@code 404}.
+	 */
 	@Override
 	public Optional<Stock> fetchStock(String ticker) {
 		if (apiKey == null || apiKey.isBlank()) {

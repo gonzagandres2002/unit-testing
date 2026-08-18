@@ -33,3 +33,22 @@ stocklens:
       - MCD
       - DIS
       - NFLX
+
+springdoc:
+  api-docs:
+    # The generated spec. Serve it under /v3/api-docs (the springdoc default).
+    path: /v3/api-docs
+    # Set both `enabled` flags to false in a public deployment: they expose the
+    # full API surface and, via Swagger UI, a live request console.
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operations-sorter: alpha
+    tags-sorter: alpha
+    display-request-duration: true
+    # Collapse the schema section by default; the operations are the point.
+    doc-expansion: list
+  # No actuator on the classpath, and its endpoints are not part of this API.
+  show-actuator: false
+  writer-with-order-by-keys: true

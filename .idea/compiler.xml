@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CompilerConfiguration">
+    <annotationProcessing>
+      <profile name="Gradle Imported" enabled="true">
+        <outputRelativeToContentRoot value="true" />
+        <processorPath useClasspath="false">
+          <entry name="$USER_HOME$/.gradle/caches/modules-2/files-2.1/com.github.therapi/therapi-runtime-javadoc-scribe/0.15.0/bd7a08fb0143141e1a8b2a6075194fe8280fe21d/therapi-runtime-javadoc-scribe-0.15.0.jar" />
+          <entry name="$USER_HOME$/.gradle/caches/modules-2/files-2.1/com.github.therapi/therapi-runtime-javadoc/0.15.0/2ae6d4c59e1c6280cccf64955a83739dc154270b/therapi-runtime-javadoc-0.15.0.jar" />
+        </processorPath>
+        <module name="stocklens-backend.main" />
+      </profile>
+    </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="stocklens-backend" target="21" />
+      <module name="stocklens-backend.main" target="21" />
+      <module name="stocklens-backend.test" target="21" />
+    </bytecodeTargetLevel>
+  </component>
+  <component name="JavacSettings">
+    <option name="ADDITIONAL_OPTIONS_OVERRIDE">
+      <module name="stocklens-backend" options="-parameters" />
+      <module name="stocklens-backend.main" options="-parameters" />
+      <module name="stocklens-backend.test" options="-parameters" />
+    </option>
+  </component>
+</project>

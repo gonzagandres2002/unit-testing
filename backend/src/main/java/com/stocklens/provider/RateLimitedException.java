@@ -7,6 +7,11 @@ package com.stocklens.provider;
  */
 public class RateLimitedException extends FinancialDataException {
 
+	/**
+	 * Builds the exception naming the provider that rejected the call.
+	 *
+	 * @param message which provider rejected the call and why
+	 */
 	public RateLimitedException(String message) {
 		super(message);
 	}

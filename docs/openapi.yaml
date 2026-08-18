@@ -1,0 +1,269 @@
+# GENERATED FILE — do not edit by hand; your changes will be overwritten.
+#
+# Regenerate:  cd backend && ./gradlew exportOpenApiSpec
+# Source:      StockController (+ its Javadoc), Stock, OpenApiConfig
+openapi: 3.1.0
+info:
+  contact:
+    name: stocklens
+  description: |
+    Screening data for a fixed universe of U.S. large-cap companies.
+
+    Read-only: every endpoint is a `GET`, there is no authentication, and no request changes state. Data is served from a server-side snapshot refreshed from Finnhub every 10 minutes — use `lastUpdated` to judge freshness, because the API keeps answering `200` with stale data during a provider outage.
+
+    **Every metric field is nullable.** The provider does not guarantee each metric for each company: a firm without positive earnings has no P/E, and one that pays no dividend has no yield.
+  license:
+    name: Course project — StockLens displays data only and makes no investment recommendations.
+  title: StockLens API
+  version: 0.0.1-SNAPSHOT
+servers:
+- description: This server
+  url: /
+tags:
+- description: Screening and lookup
+  name: stocks
+paths:
+  /api/stocks:
+    get:
+      description: |
+        Applies free-text search, then filters, then sort.
+
+        Three filter rules worth knowing:
+
+        - `maxPe` is **inclusive** — a P/E of exactly 29.5 passes `maxPe=29.5`.
+        - A company whose filtered metric is `null` is **excluded**, not treated
+          as passing. "Unknown P/E" is not "cheap".
+        - A **negative** P/E (a loss-making company) is **kept**, since it is
+          genuinely below any positive ceiling.
+
+        Companies missing the *sorted* metric are placed last in both directions,
+        and ties break on ticker, so ordering is deterministic across calls.
+
+        An empty result is `200` with `[]`, never `404`.
+      operationId: search
+      parameters:
+      - description: |-
+          <code>q</code> — case-insensitive substring matched
+                               against ticker <em>and</em> company name; omit or
+                               leave blank to return the whole universe
+        in: query
+        name: q
+        required: false
+        schema:
+          type: string
+      - description: |-
+          upper P/E bound, inclusive; must be <code>&gt; 0</code>.
+                               Companies with no reported P/E are excluded
+        in: query
+        name: maxPe
+        required: false
+        schema:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+      - description: |-
+          lower market-cap bound in <strong>billions</strong>
+                               of USD (<code>500</code> means $500B); must be
+                               <code>&gt;= 0</code>. Companies with no reported market cap
+                               are excluded
+        in: query
+        name: minMarketCap
+        required: false
+        schema:
+          type: number
+          format: double
+          minimum: 0
+      - description: |-
+          one of <code>marketCap</code>, <code>pe</code>, <code>price</code>,
+                               <code>name</code>; defaults to <code>marketCap</code>
+        in: query
+        name: sortBy
+        required: false
+        schema:
+          type: string
+          default: marketCap
+      - description: <code>asc</code> or <code>desc</code>; defaults to <code>desc</code>
+        in: query
+        name: order
+        required: false
+        schema:
+          type: string
+          default: desc
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Stock"
+          description: |-
+            matching stocks, possibly empty; an empty result is <code>200</code>
+                     with <code>[]</code>, never <code>404</code>
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: "Invalid parameter — unknown `sortBy`/`order`, a non-numeric\
+            \ filter value, `maxPe <= 0`, `minMarketCap < 0`, or a malformed ticker."
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: |-
+            No cached snapshot exists **and** the provider cannot supply one.
+
+            Rarer than it looks: a single failing ticker is skipped, and a failed refresh with a warm cache is served stale with a `200`. A `503` means the backend has never successfully fetched data, or restarted before it could. Transient — retry.
+      summary: Screen the universe
+      tags:
+      - stocks
+  /api/stocks/{ticker}:
+    get:
+      description: |
+        Returns one company from the screened universe.
+
+        Scoped to the configured universe, not to all of Finnhub: a real symbol
+        that is not in `stocklens.screener.tickers` returns `404`, because the
+        screener holds no snapshot for it.
+
+        The ticker is matched case-insensitively.
+      operationId: byTicker
+      parameters:
+      - description: |-
+          exchange symbol, matched case-insensitively. The pattern
+                         rejects malformed input before it reaches the service: a
+                         leading letter followed by up to nine letters, digits,
+                         dots or hyphens
+        in: path
+        name: ticker
+        required: true
+        schema:
+          type: string
+          pattern: "[A-Za-z][A-Za-z0-9.\\-]{0,9}"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Stock"
+          description: the matching stock
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: "Invalid parameter — unknown `sortBy`/`order`, a non-numeric\
+            \ filter value, `maxPe <= 0`, `minMarketCap < 0`, or a malformed ticker."
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: "No screened company has that ticker. Scoped to the configured\
+            \ universe, not to all of Finnhub."
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+          description: |-
+            No cached snapshot exists **and** the provider cannot supply one.
+
+            Rarer than it looks: a single failing ticker is skipped, and a failed refresh with a warm cache is served stale with a `200`. A `503` means the backend has never successfully fetched data, or restarted before it could. Transient — retry.
+      summary: Look up one company
+      tags:
+      - stocks
+components:
+  schemas:
+    ProblemDetail:
+      type: object
+      description: RFC 9457 problem detail.
+      properties:
+        detail:
+          type: string
+          example: "Unknown sortBy 'volume'; expected one of: name, price, pe, marketCap"
+        instance:
+          type: string
+          format: uri
+        status:
+          type: integer
+          format: int32
+          example: 400
+        title:
+          type: string
+          example: Bad Request
+        type:
+          type: string
+          format: uri
+          example: about:blank
+    Stock:
+      type: object
+      description: |-
+        An immutable snapshot of one company's screening data, as served by
+         <code>GET /api/stocks</code>.
+
+         <p>Every metric is a boxed <code>Double</code> rather than a primitive because
+         the external provider does not guarantee every metric for every company:
+         P/E is undefined for a company without positive earnings, and a company
+         that pays no dividend has no yield. Callers must treat these as nullable.
+         Only <code>ticker</code>, <code>name</code> and <code>lastUpdated</code> are always
+         present; <code>price</code> is always present for stocks that reach this record,
+         because the provider discards quotes it cannot price.
+
+         <p>Example:
+         <pre><code>
+         Stock msft = new Stock(&quot;MSFT&quot;, &quot;Microsoft Corp&quot;, &quot;Technology&quot;,
+                 512.30, 29.5, 3.1e12, 0.71, Instant.now());
+
+         msft.marketCap();   // 3.1e12 — plain USD, not millions
+         msft.peRatio();     // 29.5, or null if the company reports no P/E
+         </code></pre>
+      properties:
+        dividendYield:
+          type: number
+          format: double
+          description: |-
+            trailing dividend yield as a percentage, e.g.
+                                  <code>0.71</code> for 0.71%; <code>null</code> if none
+        lastUpdated:
+          type: string
+          format: date-time
+          description: |-
+            instant the data was fetched from the provider, used
+                                  to reason about staleness; never <code>null</code>
+        marketCap:
+          type: number
+          format: double
+          description: |-
+            market capitalization in <strong>plain USD</strong>
+                                  (3.1e12, not 3_100_000 millions); <code>null</code> if
+                                  unreported
+        name:
+          type: string
+          description: |-
+            company name as reported by the provider, e.g.
+                                  <code>&quot;Microsoft Corp&quot;</code>; never <code>null</code>
+        peRatio:
+          type: number
+          format: double
+          description: |-
+            trailing price/earnings ratio; <code>null</code> when
+                                  undefined, and negative for a loss-making company
+        price:
+          type: number
+          format: double
+          description: |-
+            last trade price in USD; <code>null</code> only if the
+                                  snapshot was built without a quote
+        sector:
+          type: string
+          description: |-
+            industry classification, e.g. <code>&quot;Technology&quot;</code>;
+                                  <code>null</code> if the provider does not classify it
+        ticker:
+          type: string
+          description: |-
+            exchange symbol in upper case, e.g. <code>&quot;MSFT&quot;</code>;
+                                  never <code>null</code>

@@ -8,3 +8,7 @@
 /dataSources.local.xml
 # Editor-based HTTP Client requests
 /httpRequests/
+# Run configurations contain the local API key
+/runConfigurations/
+# Claude Code tab state
+/claudeCodeTabState.xml

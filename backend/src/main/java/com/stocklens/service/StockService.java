@@ -40,6 +40,38 @@ public class StockService {
 		this.clock = clock;
 	}
 
+	/**
+	 * Screens the cached universe: free-text match, then filters, then sort.
+	 *
+	 * <p>Filter semantics worth knowing before you call this:
+	 * <ul>
+	 * <li>{@code maxPe} is <strong>inclusive</strong> — a P/E of exactly 29.5
+	 * passes {@code maxPe=29.5}.</li>
+	 * <li>A company whose filtered metric is {@code null} is <strong>excluded</strong>.
+	 * "Unknown P/E" is not treated as "cheap".</li>
+	 * <li>A negative P/E (a loss-making company) is kept, because it is a real
+	 * reported value and is genuinely below any positive ceiling.</li>
+	 * <li>Companies missing the <em>sorted</em> metric are placed last in both
+	 * directions, and ties break on ticker, so the order is total and
+	 * deterministic.</li>
+	 * </ul>
+	 *
+	 * <p>Triggers a provider refresh only when the cache is empty or expired;
+	 * see the class documentation for the degradation rules.
+	 *
+	 * <pre>{@code
+	 * // "large caps trading under 30x earnings, cheapest first"
+	 * List<Stock> value = service.search(new StockQuery(
+	 *         null, 30.0, 500.0, SortBy.PE, Direction.ASC));
+	 * }</pre>
+	 *
+	 * @param query validated search text, filters and sort order; the search
+	 *              term may be {@code null} or blank to match everything, and
+	 *              either filter may be {@code null} to skip it
+	 * @return an immutable list of matching stocks, empty if nothing matches
+	 * @throws DataUnavailableException if no snapshot is cached and the
+	 *                                  provider cannot supply one
+	 */
 	public List<Stock> search(StockQuery query) {
 		List<Stock> result = new ArrayList<>(currentSnapshot().stocks());
 		if (query.search() != null && !query.search().isBlank()) {
@@ -66,6 +98,24 @@ public class StockService {
 		return List.copyOf(result);
 	}
 
+	/**
+	 * Looks up one company in the screened universe.
+	 *
+	 * <p>Scoped to the configured universe, not to all of Finnhub: a valid
+	 * symbol that is not in {@code stocklens.screener.tickers} is reported as
+	 * not found, because the screener has no snapshot for it.
+	 *
+	 * <pre>{@code
+	 * service.getByTicker(" msft ").name();   // "Microsoft Corp"
+	 * }</pre>
+	 *
+	 * @param ticker exchange symbol; surrounding whitespace is trimmed and the
+	 *               comparison ignores case
+	 * @return the matching stock, never {@code null}
+	 * @throws StockNotFoundException   if no screened company has that ticker
+	 * @throws DataUnavailableException if no snapshot is cached and the
+	 *                                  provider cannot supply one
+	 */
 	public Stock getByTicker(String ticker) {
 		return currentSnapshot().stocks().stream()
 			.filter(stock -> stock.ticker().equalsIgnoreCase(ticker.trim()))

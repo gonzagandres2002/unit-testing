@@ -1,0 +1,20 @@
+# ---------- Dependencies / package folders ----------
+# npm
+node_modules/
+
+# Gradle
+.gradle/
+build/
+bin/
+out/
+
+# IntelliJ dependency metadata (regenerated on every Gradle sync)
+.idea/libraries/
+
+# ---------- Local environment ----------
+.env
+.env.local
+
+# ---------- OS ----------
+.DS_Store
+/.idea

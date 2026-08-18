@@ -14,6 +14,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
@@ -25,6 +26,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Integration tests through the full HTTP → controller → service stack, with
  * only the external provider replaced by a mock. The context is rebuilt per
  * test because the service cache is stateful.
+ *
+ * <p>Each test follows the Arrange-Act-Assert (AAA) pattern: Arrange stubs
+ * the mocked {@link FinancialDataProvider} (via {@link #givenHealthyProvider()}
+ * or an inline stub), Act performs the HTTP request(s) under test, and Assert
+ * checks the response.
  */
 @SpringBootTest(properties = "stocklens.screener.tickers=MSFT,GOOGL,AAPL")
 @AutoConfigureMockMvc
@@ -53,13 +59,17 @@ class StockScreenerIntegrationTest {
 
 	@Test
 	void screensFiltersAndSortsThroughTheFullStack() throws Exception {
+		// Arrange
 		givenHealthyProvider();
 
-		mockMvc.perform(get("/api/stocks")
+		// Act
+		ResultActions response = mockMvc.perform(get("/api/stocks")
 				.param("maxPe", "30")
 				.param("sortBy", "pe")
-				.param("order", "asc"))
-			.andExpect(status().isOk())
+				.param("order", "asc"));
+
+		// Assert
+		response.andExpect(status().isOk())
 			.andExpect(jsonPath("$.length()").value(2))
 			.andExpect(jsonPath("$[0].ticker").value("GOOGL"))
 			.andExpect(jsonPath("$[1].ticker").value("MSFT"));
@@ -67,25 +77,36 @@ class StockScreenerIntegrationTest {
 
 	@Test
 	void searchAndDetailEndpointWorkTogether() throws Exception {
+		// Arrange
 		givenHealthyProvider();
 
-		mockMvc.perform(get("/api/stocks").param("q", "apple"))
-			.andExpect(status().isOk())
+		// Act — search endpoint
+		ResultActions searchResponse = mockMvc.perform(get("/api/stocks").param("q", "apple"));
+
+		// Assert — search endpoint
+		searchResponse.andExpect(status().isOk())
 			.andExpect(jsonPath("$.length()").value(1))
 			.andExpect(jsonPath("$[0].ticker").value("AAPL"));
 
-		mockMvc.perform(get("/api/stocks/AAPL"))
-			.andExpect(status().isOk())
+		// Act — detail endpoint, using the ticker the search step just returned
+		ResultActions detailResponse = mockMvc.perform(get("/api/stocks/AAPL"));
+
+		// Assert — detail endpoint
+		detailResponse.andExpect(status().isOk())
 			.andExpect(jsonPath("$.name").value("Apple"))
 			.andExpect(jsonPath("$.marketCap").value(3.5e12));
 	}
 
 	@Test
 	void completeProviderOutageWithColdCacheYields503() throws Exception {
+		// Arrange
 		when(provider.fetchStock(anyString())).thenThrow(new FinancialDataException("API down"));
 
-		mockMvc.perform(get("/api/stocks"))
-			.andExpect(status().isServiceUnavailable())
+		// Act
+		ResultActions response = mockMvc.perform(get("/api/stocks"));
+
+		// Assert
+		response.andExpect(status().isServiceUnavailable())
 			.andExpect(jsonPath("$.status").value(503));
 	}
 }

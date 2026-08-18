@@ -33,6 +33,11 @@ import static org.mockito.Mockito.when;
 /**
  * Unit tests for the screener logic (search, filter, sort) and the caching /
  * degradation behavior, with the external provider fully mocked.
+ *
+ * <p>Every test follows the Arrange-Act-Assert (AAA) pattern with the three
+ * phases explicitly separated: Arrange builds the fixture (mock stubbing,
+ * service construction), Act performs the single operation under test, and
+ * Assert verifies the outcome.
  */
 @ExtendWith(MockitoExtension.class)
 class StockServiceTest {
@@ -90,27 +95,62 @@ class StockServiceTest {
 
 		@Test
 		void findsExistingCompanyByPartialNameIgnoringCase() {
+			// Arrange
 			serviceWith(MSFT, GOOGL, AAPL);
-			assertThat(tickers(service.search(query("micRO", null, null)))).containsExactly("MSFT");
+
+			// Act
+			List<Stock> results = service.search(query("micRO", null, null));
+
+			// Assert
+			assertThat(tickers(results)).containsExactly("MSFT");
 		}
 
 		@Test
 		void findsExistingCompanyByTickerIgnoringCase() {
+			// Arrange
 			serviceWith(MSFT, GOOGL, AAPL);
-			assertThat(tickers(service.search(query("aapl", null, null)))).containsExactly("AAPL");
+
+			// Act
+			List<Stock> results = service.search(query("aapl", null, null));
+
+			// Assert
+			assertThat(tickers(results)).containsExactly("AAPL");
 		}
 
 		@Test
 		void nonexistentCompanyYieldsEmptyResult() {
+			// Arrange
 			serviceWith(MSFT, GOOGL, AAPL);
-			assertThat(service.search(query("Netflix", null, null))).isEmpty();
+
+			// Act
+			List<Stock> results = service.search(query("Netflix", null, null));
+
+			// Assert
+			assertThat(results).isEmpty();
 		}
 
 		@Test
-		void emptyAndBlankSearchReturnEverything() {
+		void emptySearchReturnsEverything() {
+			// Arrange
 			serviceWith(MSFT, GOOGL, AAPL);
-			assertThat(service.search(query(null, null, null))).hasSize(3);
-			assertThat(service.search(query("   ", null, null))).hasSize(3);
+
+			// Act
+			List<Stock> results = service.search(query(null, null, null));
+
+			// Assert
+			assertThat(results).hasSize(3);
+		}
+
+		@Test
+		void blankSearchReturnsEverything() {
+			// Arrange
+			serviceWith(MSFT, GOOGL, AAPL);
+
+			// Act
+			List<Stock> results = service.search(query("   ", null, null));
+
+			// Assert
+			assertThat(results).hasSize(3);
 		}
 	}
 
@@ -119,43 +159,75 @@ class StockServiceTest {
 
 		@Test
 		void maxPeKeepsOnlyCheaperCompaniesAndTreatsBoundaryAsInclusive() {
+			// Arrange
 			serviceWith(MSFT, GOOGL, AAPL);
-			assertThat(tickers(service.search(query(null, 29.5, null))))
-				.containsExactlyInAnyOrder("MSFT", "GOOGL");
+
+			// Act
+			List<Stock> results = service.search(query(null, 29.5, null));
+
+			// Assert
+			assertThat(tickers(results)).containsExactlyInAnyOrder("MSFT", "GOOGL");
 		}
 
 		@Test
 		void maxPeExcludesCompaniesWithMissingPe() {
+			// Arrange
 			serviceWith(MSFT, NODATA);
-			assertThat(tickers(service.search(query(null, 100.0, null)))).containsExactly("MSFT");
+
+			// Act
+			List<Stock> results = service.search(query(null, 100.0, null));
+
+			// Assert
+			assertThat(tickers(results)).containsExactly("MSFT");
 		}
 
 		@Test
 		void maxPeKeepsNegativePeCompanies() {
+			// Arrange
 			serviceWith(MSFT, LOSSCO);
-			assertThat(tickers(service.search(query(null, 30.0, null))))
-				.containsExactlyInAnyOrder("MSFT", "LOSSCO");
+
+			// Act
+			List<Stock> results = service.search(query(null, 30.0, null));
+
+			// Assert
+			assertThat(tickers(results)).containsExactlyInAnyOrder("MSFT", "LOSSCO");
 		}
 
 		@Test
 		void minMarketCapZeroKeepsAllCompaniesWithData() {
+			// Arrange
 			serviceWith(MSFT, GOOGL, NODATA);
-			assertThat(tickers(service.search(query(null, null, 0.0))))
-				.containsExactlyInAnyOrder("MSFT", "GOOGL");
+
+			// Act
+			List<Stock> results = service.search(query(null, null, 0.0));
+
+			// Assert
+			assertThat(tickers(results)).containsExactlyInAnyOrder("MSFT", "GOOGL");
 		}
 
 		@Test
 		void veryLargeMinMarketCapYieldsEmptyResult() {
+			// Arrange
 			serviceWith(MSFT, GOOGL, AAPL);
-			assertThat(service.search(query(null, null, 1e12))).isEmpty();
+
+			// Act
+			List<Stock> results = service.search(query(null, null, 1e12));
+
+			// Assert
+			assertThat(results).isEmpty();
 		}
 
 		@Test
 		void filtersCombineWithSearch() {
+			// Arrange
 			serviceWith(MSFT, GOOGL, AAPL);
-			assertThat(service.search(query("a", 28.0, null)))
-				.extracting(Stock::ticker)
-				.containsExactly("GOOGL"); // "a" matches Alphabet + Apple, P/E cuts Apple
+
+			// Act
+			List<Stock> results = service.search(query("a", 28.0, null));
+
+			// Assert
+			// "a" matches Alphabet + Apple, P/E cuts Apple
+			assertThat(results).extracting(Stock::ticker).containsExactly("GOOGL");
 		}
 	}
 
@@ -164,37 +236,75 @@ class StockServiceTest {
 
 		@Test
 		void sortsByMarketCapDescending() {
+			// Arrange
 			serviceWith(MSFT, GOOGL, AAPL);
-			assertThat(tickers(service.search(sorted(SortBy.MARKET_CAP, Direction.DESC))))
-				.containsExactly("AAPL", "MSFT", "GOOGL");
+
+			// Act
+			List<Stock> results = service.search(sorted(SortBy.MARKET_CAP, Direction.DESC));
+
+			// Assert
+			assertThat(tickers(results)).containsExactly("AAPL", "MSFT", "GOOGL");
 		}
 
 		@Test
 		void sortsByPeAscending() {
+			// Arrange
 			serviceWith(MSFT, GOOGL, AAPL);
-			assertThat(tickers(service.search(sorted(SortBy.PE, Direction.ASC))))
-				.containsExactly("GOOGL", "MSFT", "AAPL");
+
+			// Act
+			List<Stock> results = service.search(sorted(SortBy.PE, Direction.ASC));
+
+			// Assert
+			assertThat(tickers(results)).containsExactly("GOOGL", "MSFT", "AAPL");
 		}
 
 		@Test
 		void sortsByPriceDescending() {
+			// Arrange
 			serviceWith(MSFT, GOOGL, AAPL);
-			assertThat(tickers(service.search(sorted(SortBy.PRICE, Direction.DESC))))
-				.containsExactly("MSFT", "AAPL", "GOOGL");
+
+			// Act
+			List<Stock> results = service.search(sorted(SortBy.PRICE, Direction.DESC));
+
+			// Assert
+			assertThat(tickers(results)).containsExactly("MSFT", "AAPL", "GOOGL");
 		}
 
 		@Test
 		void sortsByNameAscending() {
+			// Arrange
 			serviceWith(MSFT, GOOGL, AAPL);
-			assertThat(tickers(service.search(sorted(SortBy.NAME, Direction.ASC))))
-				.containsExactly("GOOGL", "AAPL", "MSFT"); // Alphabet, Apple, Microsoft
+
+			// Act
+			List<Stock> results = service.search(sorted(SortBy.NAME, Direction.ASC));
+
+			// Assert
+			// Alphabet, Apple, Microsoft
+			assertThat(tickers(results)).containsExactly("GOOGL", "AAPL", "MSFT");
 		}
 
 		@Test
-		void companiesMissingTheSortedMetricGoLastInBothDirections() {
+		void companiesMissingTheSortedMetricGoLastAscending() {
+			// Arrange
 			serviceWith(MSFT, NODATA, GOOGL);
-			assertThat(tickers(service.search(sorted(SortBy.PE, Direction.ASC)))).endsWith("NODATA");
-			assertThat(tickers(service.search(sorted(SortBy.PE, Direction.DESC)))).endsWith("NODATA");
+
+			// Act
+			List<Stock> results = service.search(sorted(SortBy.PE, Direction.ASC));
+
+			// Assert
+			assertThat(tickers(results)).endsWith("NODATA");
+		}
+
+		@Test
+		void companiesMissingTheSortedMetricGoLastDescending() {
+			// Arrange
+			serviceWith(MSFT, NODATA, GOOGL);
+
+			// Act
+			List<Stock> results = service.search(sorted(SortBy.PE, Direction.DESC));
+
+			// Assert
+			assertThat(tickers(results)).endsWith("NODATA");
 		}
 	}
 
@@ -203,46 +313,67 @@ class StockServiceTest {
 
 		@Test
 		void secondSearchWithinTtlDoesNotCallProviderAgain() {
+			// Arrange
 			serviceWith(MSFT, GOOGL);
+
+			// Act
 			service.search(query(null, null, null));
 			service.search(query("micro", null, null));
+
+			// Assert
 			verify(provider, times(2)).fetchStock(anyString());
 		}
 
 		@Test
 		void expiredCacheIsRefreshedFromProvider() {
+			// Arrange
 			serviceWith(MSFT, GOOGL);
 			service.search(query(null, null, null));
 			clock.advance(TTL.plusSeconds(1));
+
+			// Act
 			service.search(query(null, null, null));
+
+			// Assert
 			verify(provider, times(4)).fetchStock(anyString());
 		}
 
 		@Test
 		void tickerThatFailsIsSkippedAndOthersAreServed() {
+			// Arrange
 			when(provider.fetchStock("MSFT")).thenReturn(Optional.of(MSFT));
 			when(provider.fetchStock("BROKEN")).thenThrow(new FinancialDataException("HTTP 500"));
 			when(provider.fetchStock("GOOGL")).thenReturn(Optional.of(GOOGL));
 			serviceForTickers(List.of("MSFT", "BROKEN", "GOOGL"));
 
-			assertThat(tickers(service.search(query(null, null, null))))
-				.containsExactlyInAnyOrder("MSFT", "GOOGL");
+			// Act
+			List<Stock> results = service.search(query(null, null, null));
+
+			// Assert
+			assertThat(tickers(results)).containsExactlyInAnyOrder("MSFT", "GOOGL");
 		}
 
 		@Test
 		void unknownTickerInUniverseIsSimplyAbsent() {
+			// Arrange
 			when(provider.fetchStock("MSFT")).thenReturn(Optional.of(MSFT));
 			when(provider.fetchStock("GHOST")).thenReturn(Optional.empty());
 			serviceForTickers(List.of("MSFT", "GHOST"));
 
-			assertThat(tickers(service.search(query(null, null, null)))).containsExactly("MSFT");
+			// Act
+			List<Stock> results = service.search(query(null, null, null));
+
+			// Assert
+			assertThat(tickers(results)).containsExactly("MSFT");
 		}
 
 		@Test
 		void rateLimitWithoutCacheMeansDataUnavailable() {
+			// Arrange
 			when(provider.fetchStock(anyString())).thenThrow(new RateLimitedException("429"));
 			serviceForTickers(List.of("MSFT", "GOOGL"));
 
+			// Act & Assert
 			assertThatThrownBy(() -> service.search(query(null, null, null)))
 				.isInstanceOf(DataUnavailableException.class);
 			// The refresh must stop at the first rate-limit error instead of
@@ -252,36 +383,47 @@ class StockServiceTest {
 
 		@Test
 		void rateLimitAfterSuccessfulFetchServesStaleData() {
+			// Arrange
 			when(provider.fetchStock("MSFT")).thenReturn(Optional.of(MSFT));
 			serviceForTickers(List.of("MSFT"));
 			service.search(query(null, null, null));
-
 			clock.advance(TTL.plusSeconds(1));
 			when(provider.fetchStock("MSFT")).thenThrow(new RateLimitedException("429"));
 
-			assertThat(tickers(service.search(query(null, null, null)))).containsExactly("MSFT");
+			// Act
+			List<Stock> results = service.search(query(null, null, null));
+
+			// Assert
+			assertThat(tickers(results)).containsExactly("MSFT");
 		}
 
 		@Test
 		void totalProviderFailureWithoutCacheMeansDataUnavailable() {
+			// Arrange
 			when(provider.fetchStock(anyString())).thenThrow(new FinancialDataException("down"));
 			serviceForTickers(List.of("MSFT", "GOOGL"));
 
+			// Act & Assert
 			assertThatThrownBy(() -> service.search(query(null, null, null)))
 				.isInstanceOf(DataUnavailableException.class);
 		}
 
 		@Test
 		void totalProviderFailureAfterSuccessfulFetchServesStaleData() {
+			// Arrange
 			when(provider.fetchStock("MSFT")).thenReturn(Optional.of(MSFT));
 			serviceForTickers(List.of("MSFT"));
 			service.search(query(null, null, null));
-
 			clock.advance(TTL.plusSeconds(1));
 			when(provider.fetchStock("MSFT")).thenThrow(new FinancialDataException("down"));
 
-			assertThat(tickers(service.search(query(null, null, null)))).containsExactly("MSFT");
+			// Act
+			List<Stock> results = service.search(query(null, null, null));
+
+			// Assert
+			assertThat(tickers(results)).containsExactly("MSFT");
 		}
+
 	}
 
 	@Nested
@@ -289,13 +431,22 @@ class StockServiceTest {
 
 		@Test
 		void findsStockByTickerIgnoringCase() {
+			// Arrange
 			serviceWith(MSFT, GOOGL);
-			assertThat(service.getByTicker(" msft ").name()).isEqualTo("Microsoft");
+
+			// Act
+			Stock result = service.getByTicker(" msft ");
+
+			// Assert
+			assertThat(result.name()).isEqualTo("Microsoft");
 		}
 
 		@Test
 		void unknownTickerThrowsNotFound() {
+			// Arrange
 			serviceWith(MSFT);
+
+			// Act & Assert
 			assertThatThrownBy(() -> service.getByTicker("ZZZZ"))
 				.isInstanceOf(StockNotFoundException.class);
 		}
@@ -306,15 +457,28 @@ class StockServiceTest {
 
 		@Test
 		void sortByAcceptsKnownValuesCaseInsensitively() {
-			assertThat(SortBy.from("marketCap")).isEqualTo(SortBy.MARKET_CAP);
-			assertThat(SortBy.from("MARKET_CAP")).isEqualTo(SortBy.MARKET_CAP);
-			assertThat(SortBy.from("pe")).isEqualTo(SortBy.PE);
-			assertThat(SortBy.from("Price")).isEqualTo(SortBy.PRICE);
-			assertThat(SortBy.from("name")).isEqualTo(SortBy.NAME);
+			// Arrange — no fixture needed, SortBy.from is a pure function
+
+			// Act
+			SortBy marketCapLower = SortBy.from("marketCap");
+			SortBy marketCapUpper = SortBy.from("MARKET_CAP");
+			SortBy pe = SortBy.from("pe");
+			SortBy price = SortBy.from("Price");
+			SortBy name = SortBy.from("name");
+
+			// Assert
+			assertThat(marketCapLower).isEqualTo(SortBy.MARKET_CAP);
+			assertThat(marketCapUpper).isEqualTo(SortBy.MARKET_CAP);
+			assertThat(pe).isEqualTo(SortBy.PE);
+			assertThat(price).isEqualTo(SortBy.PRICE);
+			assertThat(name).isEqualTo(SortBy.NAME);
 		}
 
 		@Test
 		void invalidSortByAndOrderAreRejected() {
+			// Arrange — no fixture needed, SortBy.from / Direction.from are pure functions
+
+			// Act & Assert
 			assertThatThrownBy(() -> SortBy.from("volume")).isInstanceOf(IllegalArgumentException.class);
 			assertThatThrownBy(() -> SortBy.from(null)).isInstanceOf(IllegalArgumentException.class);
 			assertThatThrownBy(() -> Direction.from("sideways")).isInstanceOf(IllegalArgumentException.class);

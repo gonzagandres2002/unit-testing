@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -24,7 +25,17 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** Web-layer tests: HTTP contract, parameter validation and error mapping. */
+/**
+ * Web-layer tests: HTTP contract, parameter validation and error mapping.
+ *
+ * <p>Each test follows the Arrange-Act-Assert (AAA) pattern. Arrange stubs
+ * the mocked {@link StockService}; Act performs the single HTTP request
+ * under test ({@code mockMvc.perform(...)}); Assert checks the response
+ * ({@code andExpect(...)}) and, where relevant, the query object the
+ * controller actually passed to the service. Tests that only exercise
+ * request validation — which is rejected before the service is ever called
+ * — have nothing to arrange.
+ */
 @WebMvcTest(StockController.class)
 class StockControllerTest {
 
@@ -39,10 +50,14 @@ class StockControllerTest {
 
 	@Test
 	void listReturnsJsonArrayOfStocks() throws Exception {
+		// Arrange
 		when(stockService.search(any())).thenReturn(List.of(MSFT));
 
-		mockMvc.perform(get("/api/stocks"))
-			.andExpect(status().isOk())
+		// Act
+		ResultActions response = mockMvc.perform(get("/api/stocks"));
+
+		// Assert
+		response.andExpect(status().isOk())
 			.andExpect(jsonPath("$.length()").value(1))
 			.andExpect(jsonPath("$[0].ticker").value("MSFT"))
 			.andExpect(jsonPath("$[0].name").value("Microsoft"))
@@ -53,13 +68,16 @@ class StockControllerTest {
 
 	@Test
 	void defaultQuerySortsByMarketCapDescending() throws Exception {
+		// Arrange
 		when(stockService.search(any())).thenReturn(List.of());
 
+		// Act
 		mockMvc.perform(get("/api/stocks")).andExpect(status().isOk());
-
 		ArgumentCaptor<StockQuery> captor = ArgumentCaptor.forClass(StockQuery.class);
 		verify(stockService).search(captor.capture());
 		StockQuery query = captor.getValue();
+
+		// Assert
 		assertThat(query.search()).isNull();
 		assertThat(query.maxPe()).isNull();
 		assertThat(query.minMarketCapBillions()).isNull();
@@ -69,8 +87,10 @@ class StockControllerTest {
 
 	@Test
 	void allQueryParametersArePassedToTheService() throws Exception {
+		// Arrange
 		when(stockService.search(any())).thenReturn(List.of());
 
+		// Act
 		mockMvc.perform(get("/api/stocks")
 				.param("q", "micro")
 				.param("maxPe", "30")
@@ -78,10 +98,11 @@ class StockControllerTest {
 				.param("sortBy", "pe")
 				.param("order", "asc"))
 			.andExpect(status().isOk());
-
 		ArgumentCaptor<StockQuery> captor = ArgumentCaptor.forClass(StockQuery.class);
 		verify(stockService).search(captor.capture());
 		StockQuery query = captor.getValue();
+
+		// Assert
 		assertThat(query.search()).isEqualTo("micro");
 		assertThat(query.maxPe()).isEqualTo(30.0);
 		assertThat(query.minMarketCapBillions()).isEqualTo(10.0);
@@ -90,67 +111,112 @@ class StockControllerTest {
 	}
 
 	@Test
-	void zeroAndNegativeMaxPeAreRejected() throws Exception {
+	void zeroMaxPeIsRejected() throws Exception {
+		// Arrange — no stubbing needed; validation happens before the service is called
+
+		// Act & Assert
 		mockMvc.perform(get("/api/stocks").param("maxPe", "0"))
 			.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void negativeMaxPeIsRejected() throws Exception {
+		// Arrange — no stubbing needed; validation happens before the service is called
+
+		// Act & Assert
 		mockMvc.perform(get("/api/stocks").param("maxPe", "-5"))
 			.andExpect(status().isBadRequest());
 	}
 
 	@Test
 	void negativeMinMarketCapIsRejected() throws Exception {
+		// Arrange — no stubbing needed; validation happens before the service is called
+
+		// Act & Assert
 		mockMvc.perform(get("/api/stocks").param("minMarketCap", "-1"))
 			.andExpect(status().isBadRequest());
 	}
 
 	@Test
 	void nonNumericFilterValueIsRejected() throws Exception {
-		mockMvc.perform(get("/api/stocks").param("maxPe", "cheap"))
-			.andExpect(status().isBadRequest())
+		// Arrange — no stubbing needed; validation happens before the service is called
+
+		// Act
+		ResultActions response = mockMvc.perform(get("/api/stocks").param("maxPe", "cheap"));
+
+		// Assert
+		response.andExpect(status().isBadRequest())
 			.andExpect(jsonPath("$.detail").value("Parameter 'maxPe' has an invalid value"));
 	}
 
 	@Test
-	void unknownSortFieldAndOrderAreRejected() throws Exception {
-		mockMvc.perform(get("/api/stocks").param("sortBy", "volume"))
-			.andExpect(status().isBadRequest())
+	void unknownSortFieldIsRejected() throws Exception {
+		// Arrange — no stubbing needed; validation happens before the service is called
+
+		// Act
+		ResultActions response = mockMvc.perform(get("/api/stocks").param("sortBy", "volume"));
+
+		// Assert
+		response.andExpect(status().isBadRequest())
 			.andExpect(jsonPath("$.detail").value(
 					"Unknown sortBy 'volume'; expected one of: name, price, pe, marketCap"));
+	}
+
+	@Test
+	void unknownOrderIsRejected() throws Exception {
+		// Arrange — no stubbing needed; validation happens before the service is called
+
+		// Act & Assert
 		mockMvc.perform(get("/api/stocks").param("order", "sideways"))
 			.andExpect(status().isBadRequest());
 	}
 
 	@Test
 	void singleStockIsReturnedByTicker() throws Exception {
+		// Arrange
 		when(stockService.getByTicker("MSFT")).thenReturn(MSFT);
 
-		mockMvc.perform(get("/api/stocks/MSFT"))
-			.andExpect(status().isOk())
+		// Act
+		ResultActions response = mockMvc.perform(get("/api/stocks/MSFT"));
+
+		// Assert
+		response.andExpect(status().isOk())
 			.andExpect(jsonPath("$.ticker").value("MSFT"));
 	}
 
 	@Test
 	void unknownTickerYields404ProblemDetail() throws Exception {
+		// Arrange
 		when(stockService.getByTicker("ZZZZ")).thenThrow(new StockNotFoundException("ZZZZ"));
 
-		mockMvc.perform(get("/api/stocks/ZZZZ"))
-			.andExpect(status().isNotFound())
+		// Act
+		ResultActions response = mockMvc.perform(get("/api/stocks/ZZZZ"));
+
+		// Assert
+		response.andExpect(status().isNotFound())
 			.andExpect(jsonPath("$.detail").value("No stock found for ticker 'ZZZZ'"));
 	}
 
 	@Test
 	void malformedTickerIsRejected() throws Exception {
+		// Arrange — no stubbing needed; validation happens before the service is called
+
+		// Act & Assert
 		mockMvc.perform(get("/api/stocks/{ticker}", "MS FT!"))
 			.andExpect(status().isBadRequest());
 	}
 
 	@Test
 	void unavailableDataYields503ProblemDetail() throws Exception {
+		// Arrange
 		when(stockService.search(any()))
 			.thenThrow(new DataUnavailableException("Stock data is currently unavailable"));
 
-		mockMvc.perform(get("/api/stocks"))
-			.andExpect(status().isServiceUnavailable())
+		// Act
+		ResultActions response = mockMvc.perform(get("/api/stocks"));
+
+		// Assert
+		response.andExpect(status().isServiceUnavailable())
 			.andExpect(jsonPath("$.detail").value("Stock data is currently unavailable"));
 	}
 }

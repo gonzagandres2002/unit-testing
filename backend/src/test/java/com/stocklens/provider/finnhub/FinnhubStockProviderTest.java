@@ -31,6 +31,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * success path and every failure mode required by the spec: HTTP error,
  * timeout, rate limit, invalid payload and missing fields. No test talks to
  * the real Finnhub API.
+ *
+ * <p>Each test follows the Arrange-Act-Assert (AAA) pattern: {@code @BeforeEach}
+ * arranges the shared fixture (the mock server and a default provider), the
+ * test method arranges any response-specific stubbing, then performs the
+ * single operation under test (Act) and verifies its outcome (Assert).
  */
 class FinnhubStockProviderTest {
 
@@ -81,12 +86,16 @@ class FinnhubStockProviderTest {
 
 	@Test
 	void successfulResponseIsMappedToStock() throws Exception {
+		// Arrange
 		enqueueJson(PROFILE_JSON);
 		enqueueJson(QUOTE_JSON);
 		enqueueJson(METRICS_JSON);
 
+		// Act
 		Stock stock = provider.fetchStock("MSFT").orElseThrow();
+		RecordedRequest first = server.takeRequest(1, TimeUnit.SECONDS);
 
+		// Assert
 		assertThat(stock.ticker()).isEqualTo("MSFT");
 		assertThat(stock.name()).isEqualTo("Microsoft Corp");
 		assertThat(stock.sector()).isEqualTo("Technology");
@@ -96,36 +105,47 @@ class FinnhubStockProviderTest {
 		assertThat(stock.marketCap()).isEqualTo(3.1e12);
 		assertThat(stock.dividendYield()).isEqualTo(0.71);
 		assertThat(stock.lastUpdated()).isEqualTo(NOW);
-
-		RecordedRequest first = server.takeRequest(1, TimeUnit.SECONDS);
 		assertThat(first.getPath()).isEqualTo("/stock/profile2?symbol=MSFT");
 		assertThat(first.getHeader("X-Finnhub-Token")).isEqualTo("test-key");
 	}
 
 	@Test
 	void unknownTickerWithEmptyProfileYieldsEmptyWithoutFurtherCalls() {
+		// Arrange
 		enqueueJson("{}");
 
-		assertThat(provider.fetchStock("ZZZZ")).isEmpty();
+		// Act
+		Optional<Stock> result = provider.fetchStock("ZZZZ");
+
+		// Assert
+		assertThat(result).isEmpty();
 		assertThat(server.getRequestCount()).isEqualTo(1);
 	}
 
 	@Test
 	void allZeroQuoteYieldsEmpty() {
+		// Arrange
 		enqueueJson(PROFILE_JSON);
 		enqueueJson("{\"c\": 0, \"d\": null, \"dp\": null, \"h\": 0, \"l\": 0, \"o\": 0, \"pc\": 0}");
 
-		assertThat(provider.fetchStock("DELISTED")).isEmpty();
+		// Act
+		Optional<Stock> result = provider.fetchStock("DELISTED");
+
+		// Assert
+		assertThat(result).isEmpty();
 	}
 
 	@Test
 	void missingMetricsStillYieldsStockWithNullRatios() {
+		// Arrange
 		enqueueJson(PROFILE_JSON);
 		enqueueJson(QUOTE_JSON);
 		enqueueJson("{}");
 
+		// Act
 		Optional<Stock> stock = provider.fetchStock("MSFT");
 
+		// Assert
 		assertThat(stock).isPresent();
 		assertThat(stock.get().peRatio()).isNull();
 		assertThat(stock.get().dividendYield()).isNull();
@@ -133,20 +153,25 @@ class FinnhubStockProviderTest {
 
 	@Test
 	void fallbackMetricKeysAreUsedWhenPrimaryOnesAreAbsent() {
+		// Arrange
 		enqueueJson(PROFILE_JSON);
 		enqueueJson(QUOTE_JSON);
 		enqueueJson("{\"metric\": {\"peBasicExclExtraTTM\": 28, \"dividendYieldIndicatedAnnual\": 0.8}}");
 
+		// Act
 		Stock stock = provider.fetchStock("MSFT").orElseThrow();
 
+		// Assert
 		assertThat(stock.peRatio()).isEqualTo(28.0);
 		assertThat(stock.dividendYield()).isEqualTo(0.8);
 	}
 
 	@Test
 	void httpErrorBecomesFinancialDataException() {
+		// Arrange
 		server.enqueue(new MockResponse().setResponseCode(500));
 
+		// Act & Assert
 		assertThatThrownBy(() -> provider.fetchStock("MSFT"))
 			.isInstanceOf(FinancialDataException.class)
 			.hasMessageContaining("HTTP 500");
@@ -154,27 +179,33 @@ class FinnhubStockProviderTest {
 
 	@Test
 	void rateLimitBecomesRateLimitedException() {
+		// Arrange
 		server.enqueue(new MockResponse().setResponseCode(429));
 
+		// Act & Assert
 		assertThatThrownBy(() -> provider.fetchStock("MSFT"))
 			.isInstanceOf(RateLimitedException.class);
 	}
 
 	@Test
 	void invalidJsonBecomesFinancialDataException() {
+		// Arrange
 		server.enqueue(new MockResponse().setBody("<html>maintenance</html>")
 			.addHeader("Content-Type", "application/json"));
 
+		// Act & Assert
 		assertThatThrownBy(() -> provider.fetchStock("MSFT"))
 			.isInstanceOf(FinancialDataException.class);
 	}
 
 	@Test
 	void timeoutBecomesFinancialDataException() {
+		// Arrange
 		server.enqueue(new MockResponse().setBody(PROFILE_JSON)
 			.addHeader("Content-Type", "application/json")
 			.setBodyDelay(2, TimeUnit.SECONDS));
 
+		// Act & Assert
 		assertThatThrownBy(() -> provider.fetchStock("MSFT"))
 			.isInstanceOf(FinancialDataException.class)
 			.hasMessageContaining("timed out");
@@ -182,8 +213,10 @@ class FinnhubStockProviderTest {
 
 	@Test
 	void missingApiKeyFailsFastWithoutCallingTheApi() {
+		// Arrange
 		FinnhubStockProvider withoutKey = provider("");
 
+		// Act & Assert
 		assertThatThrownBy(() -> withoutKey.fetchStock("MSFT"))
 			.isInstanceOf(FinancialDataException.class)
 			.hasMessageContaining("FINNHUB_API_KEY");

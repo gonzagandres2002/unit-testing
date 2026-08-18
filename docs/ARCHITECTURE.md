@@ -197,16 +197,21 @@ are read from Javadoc at runtime via therapi.
 
 ## Testing architecture
 
-52 tests, three tiers, no network access. Run with `./gradlew test`.
+66 tests, four tiers, no network access. Run with `./gradlew test`. Full
+walkthrough — including where the Arrange-Act-Assert pattern is applied and
+how the performance tests avoid the usual `assertTimeout` flakiness traps —
+in [`TESTING.md`](TESTING.md).
 
 | Tier | Class | Spring? | External dependency |
 | --- | --- | --- | --- |
-| Unit | `StockServiceTest` (27) | none | Mockito-mocked provider, hand-advanced clock |
+| Unit | `StockServiceTest` (29) | none | Mockito-mocked provider, hand-advanced clock |
 | Unit | `FinnhubStockProviderTest` (10) | none | Real local HTTP server (MockWebServer) |
-| Slice | `StockControllerTest` (11) | `@WebMvcTest` — web layer only | Mocked service |
+| Slice | `StockControllerTest` (13) | `@WebMvcTest` — web layer only | Mocked service |
 | Integration | `StockScreenerIntegrationTest` (3) | `@SpringBootTest` — full context | Only the provider mocked |
 | Smoke | `StocklensApplicationTests` (1) | `@SpringBootTest` | — |
 | Docs | `OpenApiDocsTest` (5) | `@SpringBootTest` | — |
+| Performance | `StockServicePerformanceTest` (3) | none | In-memory fake provider, 10,000-stock synthetic universe |
+| Performance | `StockScreenerPerformanceTest` (2) | `@SpringBootTest` — full context | Mocked provider, 1,000-ticker synthetic universe |
 
 Two details that are easy to break:
 

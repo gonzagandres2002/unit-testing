@@ -86,7 +86,7 @@ the client.
 
 ```bash
 cd backend
-./gradlew test             # 57 tests, no network access, external API fully mocked
+./gradlew test             # 66 tests, no network access, external API fully mocked
 open build/reports/jacoco/test/html/index.html   # coverage: 97.5% instruction, 86.5% branch
 ```
 
@@ -149,11 +149,16 @@ Key decisions — summarised here, with the full context and trade-offs in
 
 | Layer | Class | Approach |
 | --- | --- | --- |
-| Screener logic | `StockServiceTest` (27 tests) | Mockito-mocked provider; search hit/miss, blank search, filter boundaries (inclusive limit, zero, negative P/E, huge values, missing metrics), sort directions with nulls-last, TTL caching, stale-serving, rate-limit abort |
+| Screener logic | `StockServiceTest` (29 tests) | Mockito-mocked provider; search hit/miss, blank search, filter boundaries (inclusive limit, zero, negative P/E, huge values, missing metrics), sort directions with nulls-last, TTL caching, stale-serving, rate-limit abort |
 | API client | `FinnhubStockProviderTest` (10) | Local MockWebServer; success mapping, unknown ticker, HTTP 500, HTTP 429, timeout, invalid JSON, missing fields, missing API key fails fast |
-| Web layer | `StockControllerTest` (11) | `@WebMvcTest` with mocked service; JSON contract, defaults, validation (negative/zero/non-numeric filters, bad sort field, malformed ticker), 404/503 mapping |
+| Web layer | `StockControllerTest` (13) | `@WebMvcTest` with mocked service; JSON contract, defaults, validation (negative/zero/non-numeric filters, bad sort field, malformed ticker), 404/503 mapping |
 | Integration | `StockScreenerIntegrationTest` (3) | `@SpringBootTest` + MockMvc, only the provider mocked; full HTTP→controller→service flow incl. cold-cache outage → 503 |
 | API docs | `OpenApiDocsTest` (5) | `@SpringBootTest`; both endpoints present in the generated spec, error responses attached, descriptions populated from Javadoc, Swagger UI reachable |
+| Performance | `StockServicePerformanceTest` (3), `StockScreenerPerformanceTest` (2) | JUnit 5 `assertTimeout` regression guards over synthetic 1,000–10,000-item universes; service level and full HTTP stack |
+
+Every class above marks its Arrange/Act/Assert phases explicitly with
+comments — see [`docs/TESTING.md`](docs/TESTING.md#2-the-aaa-pattern) for
+where and why.
 
 Testcontainers was deliberately not used: there is no database, so it would be
 technology for its own sake.

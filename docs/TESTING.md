@@ -11,29 +11,26 @@ Gradle runs all of this. §7 coverage.
 
 ```bash
 cd backend
-./gradlew test                              # 66 tests + coverage report
+./gradlew test                              # 20 tests + coverage report
 ./gradlew test --tests '*StockServiceTest*' # one class
-./gradlew test --tests '*Performance*'      # just the performance tests
 open build/reports/tests/test/index.html            # test results
 open build/reports/jacoco/test/html/index.html      # coverage
 ```
 
-**The 66 tests at a glance**
+**The 20 tests at a glance**
 
 | Class | Count | Kind | AAA comments |
 | --- | --- | --- | --- |
-| [`StockServiceTest`](../backend/src/test/java/com/stocklens/service/StockServiceTest.java) | 29 | Unit | ✅ |
-| [`FinnhubStockProviderTest`](../backend/src/test/java/com/stocklens/provider/finnhub/FinnhubStockProviderTest.java) | 10 | Unit | ✅ |
-| [`StockControllerTest`](../backend/src/test/java/com/stocklens/web/StockControllerTest.java) | 13 | Integration (`@WebMvcTest` slice) | ✅ |
-| [`StockScreenerIntegrationTest`](../backend/src/test/java/com/stocklens/StockScreenerIntegrationTest.java) | 3 | Integration (full `@SpringBootTest`) | ✅ |
-| [`OpenApiDocsTest`](../backend/src/test/java/com/stocklens/web/OpenApiDocsTest.java) | 5 | Integration (full `@SpringBootTest`) | — |
-| [`StocklensApplicationTests`](../backend/src/test/java/com/stocklens/StocklensApplicationTests.java) | 1 | Smoke test | — |
-| [`StockServicePerformanceTest`](../backend/src/test/java/com/stocklens/service/StockServicePerformanceTest.java) | 3 | **Performance**, service level | ✅ |
-| [`StockScreenerPerformanceTest`](../backend/src/test/java/com/stocklens/StockScreenerPerformanceTest.java) | 2 | **Performance**, full HTTP stack | ✅ |
+| [`StockServiceTest`](../backend/src/test/java/com/stocklens/service/StockServiceTest.java) | 10 | Unit | ✅ |
+| [`StockScreenerIntegrationTest`](../backend/src/test/java/com/stocklens/StockScreenerIntegrationTest.java) | 10 | Integration (full `@SpringBootTest`) | ✅ |
 
-`OpenApiDocsTest` and `StocklensApplicationTests` pre-date the AAA pass done
-in this project's history and are intentionally left as-is — they're one or
-two lines each, where the phases add no clarity.
+Twenty tests, two files: 10 pure unit tests over the most critical class
+(`StockService`) and 10 full-stack integration tests over the end-to-end HTTP
+contract. Both files mark all three AAA phases throughout.
+
+`OpenApiSpecExporter` also lives under `src/test/` but is **not** one of the
+20 tests — it's a `@Tag("docgen")` build utility that exports the OpenAPI spec
+and is excluded from `./gradlew test` (see §6).
 
 ---
 
@@ -66,11 +63,10 @@ of twenty minutes of clicking.
 | **JUnit Jupiter** | 6.0.3 | Finds and runs tests (`@Test`, `@Nested`, `@BeforeEach`) |
 | **AssertJ** | 3.27.7 | Readable assertions (`assertThat(x).isEqualTo(y)`) |
 | **Mockito** | 5.23.0 | Fake collaborators (`when(...).thenReturn(...)`) |
-| **MockWebServer** | 4.12.0 | A real HTTP server on localhost, for testing the API client |
-| **Spring Boot Test** | 4.1.0 | `@SpringBootTest`, `@WebMvcTest`, `MockMvc` |
+| **Spring Boot Test** | 4.1.0 | `@SpringBootTest`, `MockMvc` |
 
-All arrive through `spring-boot-starter-webmvc-test` except MockWebServer.
-You don't pick their versions — the Spring Boot BOM does.
+All arrive through `spring-boot-starter-webmvc-test`. You don't pick their
+versions — the Spring Boot BOM does.
 
 ---
 
@@ -128,12 +124,12 @@ assertThat(stock.marketCap()).isEqualTo(profile.marketCapMillions() * 1_000_000d
 ### AAA when the Act throws
 
 Testing an exception merges Act and Assert, because the call has to be inside
-the assertion:
+the assertion (illustrative shape):
 
 ```java
 @Test
 void httpErrorBecomesFinancialDataException() {
-    server.enqueue(new MockResponse().setResponseCode(500));         // Arrange
+    // Arrange — a collaborator stubbed to fail
 
     assertThatThrownBy(() -> provider.fetchStock("MSFT"))            // Act + Assert
         .isInstanceOf(FinancialDataException.class)
@@ -142,7 +138,10 @@ void httpErrorBecomesFinancialDataException() {
 ```
 
 This is normal and correct. `assertThatThrownBy` (AssertJ) and
-`assertThrows` (JUnit) both exist for it.
+`assertThrows` (JUnit) both exist for it. In this project the failure paths
+are exercised end-to-end instead — `StockScreenerIntegrationTest`'s
+`completeProviderOutageWithColdCacheYields503` and `unknownTickerYields404ProblemDetail`
+assert the HTTP status the error is translated into.
 
 ### Where the Arrange phase goes when it repeats
 
@@ -164,24 +163,18 @@ named. `@BeforeEach` does the same job for setup that is identical everywhere.
 
 ### Where to see it in this codebase
 
-Six of the eight test classes mark all three phases with `// Arrange`,
-`// Act` and `// Assert` comments (`// Act & Assert` where the operation and
-its verification are necessarily one call, as with `assertThatThrownBy`):
+Both test classes mark all three phases with `// Arrange`, `// Act` and
+`// Assert` comments (`// Act & Assert` where the operation and its
+verification are necessarily one call, as with `assertThatThrownBy`):
 
-- [`StockServiceTest`](../backend/src/test/java/com/stocklens/service/StockServiceTest.java) — the clearest set of examples; 29 tests, every phase separated onto its own line.
-- [`FinnhubStockProviderTest`](../backend/src/test/java/com/stocklens/provider/finnhub/FinnhubStockProviderTest.java) — Arrange is enqueuing MockWebServer responses.
-- [`StockControllerTest`](../backend/src/test/java/com/stocklens/web/StockControllerTest.java) — Act captures the `MockMvc` `ResultActions`/`ArgumentCaptor` result *before* the Assert block chains `.andExpect(...)`/`assertThat(...)` on it, instead of fusing the call and the check into one statement.
-- [`StockScreenerIntegrationTest`](../backend/src/test/java/com/stocklens/StockScreenerIntegrationTest.java) — `searchAndDetailEndpointWorkTogether` has two Act/Assert pairs, labelled, because that test deliberately checks a two-request sequence.
-- [`StockServicePerformanceTest`](../backend/src/test/java/com/stocklens/service/StockServicePerformanceTest.java) and [`StockScreenerPerformanceTest`](../backend/src/test/java/com/stocklens/StockScreenerPerformanceTest.java) — see §5; the Act phase is what's wrapped in `assertTimeout`.
+- [`StockServiceTest`](../backend/src/test/java/com/stocklens/service/StockServiceTest.java) — the clearest set of examples; 10 tests, every phase separated onto its own line.
+- [`StockScreenerIntegrationTest`](../backend/src/test/java/com/stocklens/StockScreenerIntegrationTest.java) — the full HTTP stack; Act captures the `MockMvc` `ResultActions` result *before* the Assert block chains `.andExpect(...)`/`assertThat(...)` on it, and `searchAndDetailEndpointWorkTogether` has two Act/Assert pairs, labelled, because that test deliberately checks a two-request sequence.
 
 Where there's nothing to arrange — request-validation tests that never reach
 the mocked service — the comment stays and says so explicitly
 (`// Arrange — no stubbing needed; validation happens before the service is
 called`) rather than being silently dropped, so the three-phase shape is
-never ambiguous. `OpenApiDocsTest` and `StocklensApplicationTests` are the
-two exceptions (see the "66 tests at a glance" table above): each test body
-is one or two lines, short enough that phase comments would be noise rather
-than structure.
+never ambiguous.
 
 ---
 
@@ -196,7 +189,7 @@ The practical test: a unit test is **fast** (milliseconds), **deterministic**
 (same result every run, forever), and **isolated** (its result doesn't depend
 on any other test).
 
-`StockServiceTest` is the model: 29 tests, real `StockService`, fake provider,
+`StockServiceTest` is the model: 10 tests, real `StockService`, fake provider,
 fake clock, no Spring context at all.
 
 ```java
@@ -221,7 +214,7 @@ class StockServiceTest {
 | **Dummy** | Passed to satisfy a signature, never used | `new StockLensProperties(null, screener)` |
 | **Stub** | Returns canned answers | `when(provider.fetchStock("MSFT")).thenReturn(...)` |
 | **Mock** | A stub you also assert *was called* | `verify(provider, times(1)).fetchStock(...)` |
-| **Fake** | A real but simplified implementation | `MutableClock`, `MockWebServer` |
+| **Fake** | A real but simplified implementation | `MutableClock` (MockWebServer is the classic HTTP example, but it's no longer a dependency of this project) |
 | **Spy** | Wraps a real object, records calls | *not used here* |
 
 The distinction that matters: a **stub** helps you arrange, a **mock** is part
@@ -244,9 +237,11 @@ ArgumentCaptor<StockQuery> captor = ArgumentCaptor.forClass(StockQuery.class);
 verify(stockService).search(captor.capture());                     // capture the argument
 ```
 
-`ArgumentCaptor` answers "what exactly was passed?" — used in
-`StockControllerTest` to prove the controller translated `?sortBy=pe` into
-`SortBy.PE` without depending on the service at all.
+`ArgumentCaptor` answers "what exactly was passed?" — the classic use is to
+prove a controller translated `?sortBy=pe` into `SortBy.PE` without depending
+on the service at all. (This project verifies that translation end-to-end
+through `StockScreenerIntegrationTest` instead, since it no longer keeps an
+isolated web-layer slice.)
 
 ### Determinism: the injected clock
 
@@ -283,15 +278,14 @@ is probably doing two things.
 
 ### Grouping with `@Nested`
 
-`StockServiceTest` has 29 tests split into six inner classes:
+`StockServiceTest` has 10 tests split into five inner classes:
 
 ```java
-@Nested class Search { ... }              // 5 tests
-@Nested class Filtering { ... }           // 6 tests
-@Nested class Sorting { ... }             // 6 tests
-@Nested class CachingAndResilience { ... } // 8 tests
-@Nested class SingleStockLookup { ... }   // 2 tests
-@Nested class QueryParsing { ... }        // 2 tests
+@Nested class Search { ... }               // 1 test
+@Nested class Filtering { ... }            // 2 tests
+@Nested class Sorting { ... }              // 3 tests
+@Nested class CachingAndResilience { ... } // 3 tests
+@Nested class SingleStockLookup { ... }    // 1 test
 ```
 
 Results are then reported grouped, and each group can have its own setup.
@@ -311,8 +305,8 @@ tests target edges:
 | Huge value | `minMarketCap=1e12` → empty result |
 | Failure | Provider throws on one ticker, on all tickers, or rate-limits |
 
-That list is why `StockServiceTest` is 29 tests for a class with two public
-methods.
+That list is the kind of edge coverage `StockServiceTest` concentrates on for
+a class with two public methods.
 
 ---
 
@@ -341,21 +335,23 @@ that's precisely the gap integration tests close.
   ╱───────────────╲
 ```
 
-This project: **42 pure unit tests** (`StockServiceTest`,
-`FinnhubStockProviderTest`, `StockServicePerformanceTest` — no Spring at all)
-and **24 that boot some or all of Spring** — 13 in the `@WebMvcTest` slice
-(`StockControllerTest`), 11 across full-context `@SpringBootTest` classes
-(`StockScreenerIntegrationTest`, `StocklensApplicationTests`,
-`StockScreenerPerformanceTest`, `OpenApiDocsTest`). Deliberate. Each
-`@SpringBootTest` class pays for a Spring context, so those tests cover
-connections, not permutations.
+This project: **10 pure unit tests** (`StockServiceTest` — no Spring at all)
+and **10 that boot the full context** (`StockScreenerIntegrationTest`, a
+full-context `@SpringBootTest`). Deliberate. The `@SpringBootTest` class pays
+for a Spring context, so those tests cover connections, not permutations. (The
+`OpenApiSpecExporter` docgen utility also boots Spring, but it's not part of
+the 20-test suite — see §6.)
 
-### Slice tests — the middle tier
+### Slice tests — the middle tier (illustrative)
 
 `@WebMvcTest` starts *only* the web layer. Real JSON serialization, real
 validation, real exception handler — but no service, no provider, no cache.
+**This project no longer ships a `@WebMvcTest` class** — the snippet below is
+kept purely to illustrate the technique; the web layer's HTTP contract is now
+covered through the full-stack `StockScreenerIntegrationTest` instead.
 
 ```java
+// ILLUSTRATIVE — no such class exists in this repo anymore
 @WebMvcTest(StockController.class)
 class StockControllerTest {
 
@@ -375,8 +371,11 @@ class StockControllerTest {
 opening a socket. `@MockitoBean` swaps a bean in the context for a Mockito
 fake.
 
-This is the sweet spot for testing an HTTP contract: it catches a wrong status
-code or a renamed JSON field, without the cost of booting everything.
+A slice like this is the sweet spot for testing an HTTP contract in isolation:
+it catches a wrong status code or a renamed JSON field without the cost of
+booting everything. When a project keeps its suite small, those same contract
+checks can instead ride along on the full-stack integration test — which is
+the trade-off this project made.
 
 ### Full integration
 
@@ -411,25 +410,37 @@ Finnhub — that would be slow, flaky, and would burn API quota.
    universe from 18 tickers to 3.
 2. **`@DirtiesContext(AFTER_EACH_TEST_METHOD)`** rebuilds the context between
    tests. Required here because `StockService`'s cache is **stateful** —
-   without it, a snapshot cached by test 1 leaks into test 3 and the
+   without it, a snapshot cached by one test leaks into a later one and the
    cold-cache `503` test fails. **This is the classic integration-test trap:
    shared state between tests.**
-3. **Only three tests.** They cover the paths that unit tests structurally
-   cannot: does the whole chain connect, and does a cold-cache outage really
-   produce a 503 over HTTP.
+3. **Ten tests, and no more.** They cover the paths that unit tests
+   structurally cannot: does the whole chain connect, does a cold-cache outage
+   really produce a 503 over HTTP, and does the web layer's HTTP contract hold
+   — the validation `400`s (`zeroMaxPeIsRejected`,
+   `negativeMinMarketCapIsRejected`, `nonNumericFilterValueIsRejected`,
+   `unknownSortFieldIsRejected`, `malformedTickerIsRejected`), the
+   `unknownTickerYields404ProblemDetail`, and the
+   `completeProviderOutageWithColdCacheYields503`. Those contract checks used
+   to live in a separate `@WebMvcTest` slice; they now ride the full stack.
 
-### The smoke test
+### The smoke test — folded into the integration test
+
+The classic smoke test is a one-liner with an empty body:
 
 ```java
+// ILLUSTRATIVE — the standalone context-load test was removed
 @SpringBootTest
 class StocklensApplicationTests {
     @Test void contextLoads() { }
 }
 ```
 
-Empty body, and one of the highest-value tests in the project. It fails if any
-bean can't be created — a missing dependency, a bad `@Value`, a duplicate
-bean. It catches "the app won't start" before anything else runs.
+It's one of the highest-value shapes there is: it fails if any bean can't be
+created — a missing dependency, a bad `@Value`, a duplicate bean — catching
+"the app won't start" before anything else runs. This project no longer keeps
+a dedicated context-load test, but it gets the same guarantee for free:
+`StockScreenerIntegrationTest` is a full-context `@SpringBootTest`, so every
+one of its ten tests already fails if the context can't boot.
 
 ### What *not* to do in an integration test
 
@@ -445,7 +456,15 @@ bean. It catches "the app won't start" before anything else runs.
 Different question. Correctness tests ask *"is the answer right?"*.
 Performance tests ask *"how fast, and how does it degrade under load?"*.
 
-### The tempting mistake
+**This project ships no performance tests.** Earlier revisions had a pair of
+`assertTimeout`-based regression guards; they were removed to keep the suite
+focused at 10 unit + 10 integration. This section stays as a short conceptual
+note on the technique, not a description of code in the repo.
+
+### The technique, and its trap
+
+A JUnit 5 `assertTimeout` regression guard is a valid, cheap way to catch an
+accidental algorithmic blow-up (an `O(n)` lookup turning `O(n²)`):
 
 ```java
 @Test
@@ -454,8 +473,8 @@ void searchIsFast() {
 }
 ```
 
-**Be careful with this.** It looks like a performance test and can easily
-become a flakiness generator:
+**But be careful.** It looks like a performance test and can easily become a
+flakiness generator:
 
 - The JVM is slow for the first few thousand runs (JIT hasn't compiled yet),
   so it measures warm-up, not steady state.
@@ -465,114 +484,34 @@ become a flakiness generator:
   regressed or the machine was busy, so the usual fix is to raise the limit
   until it stops failing — at which point it asserts nothing.
 
-That is a real risk, not a hypothetical one — it's exactly the shape of the
-two performance test classes this project actually has. They stay useful
-because of *how* the budget is chosen (see below), not because the risk goes
-away.
+Used well, the point is *not* to assert a tight number but to catch a 10×
+regression with a deliberately generous budget. That's a coarse, honest goal —
+and the reason such a guard, if you keep one, belongs nowhere near a
+micro-benchmark's precision.
 
-### The three real levels — and where JUnit's `assertTimeout` fits
+### If you need to measure for real
+
+`assertTimeout` is the cheapest rung on a ladder. The real tools live above it:
 
 | Level | Question | Tool |
 | --- | --- | --- |
-| **Regression guard** | Did this get *dramatically* slower (10×, not 10%)? | **JUnit 5 `assertTimeout`** — what this project uses |
+| **Regression guard** | Did this get *dramatically* slower (10×, not 10%)? | **JUnit 5 `assertTimeout`** |
 | **Micro-benchmark** | How long does this method take, precisely? | **JMH** |
 | **Load test** | What happens at 500 requests/second? | **k6**, **Gatling**, **JMeter** |
 | **Profiling** | Where is the time actually going? | **async-profiler**, JFR, IntelliJ profiler |
 
 **JMH** (Java Microbenchmark Harness) is the only credible way to *measure*
-Java code precisely. It handles JVM warm-up, runs many iterations, prevents
-the optimiser from deleting your benchmark as dead code, and reports
-variance. It lives in a separate source set, not in `src/test/java`, because
-a benchmark run takes minutes and must not be part of `./gradlew test`. This
-project does not have a JMH suite.
+Java code precisely — it handles warm-up, runs many iterations, and reports
+variance — and it belongs in a separate source set, never in `./gradlew test`.
+**Load testing** targets the running API over HTTP: a k6 script against
+`/api/stocks` answers what p95 latency looks like at N concurrent users.
 
-**Load testing** targets the running API over HTTP, not classes. A k6 script
-against `/api/stocks` would answer the question that actually matters for a
-web service: what does p95 latency look like at N concurrent users. This
-project does not have one of those either.
-
-What this project *does* have is the level in between "no performance
-testing" and "a real benchmark": a cheap, coarse-grained **regression guard**
-that runs on every `./gradlew test`, catches an accidental algorithmic
-regression (e.g. an `O(n)` lookup turning into `O(n²)`), and is *deliberately*
-not trying to measure precise timings — because precise timing is exactly
-what makes `assertTimeout` flaky.
-
-### `StockServicePerformanceTest` — service level, no Spring
-
-```java
-@Test
-void unfilteredSearchOverLargeUniverseCompletesWithinBudget() {
-    // Act & Assert
-    List<Stock> results = assertTimeout(SEARCH_BUDGET,
-            () -> service.search(new StockQuery(null, null, null, SortBy.MARKET_CAP, Direction.DESC)));
-
-    assertThat(results).hasSize(LARGE_UNIVERSE_SIZE);
-}
-```
-
-Runs `StockService.search()` — the actual search/filter/sort pipeline —
-against a **10,000-stock synthetic universe**, roughly 550× production's 18
-tickers. Three tests:
-
-1. Unfiltered search stays under budget.
-2. Filtered + sorted search stays under budget.
-3. A cached (second) search is not slower than 2× the cold (first) search —
-   a regression test for "did someone accidentally bypass the cache".
-
-### `StockScreenerPerformanceTest` — the full HTTP stack
-
-Same idea, one layer up: `MockMvc` → `StockController` → `StockService` →
-mocked `FinancialDataProvider`, the same mocking approach as
-`StockScreenerIntegrationTest` (§4) — no test here ever calls the real
-Finnhub API. A 1,000-ticker universe is injected via `@DynamicPropertySource`
-because `@SpringBootTest(properties = ...)` only accepts compile-time
-constants, not a generated list.
-
-This adds what the service-level test structurally cannot see: request
-routing, parameter validation, and **JSON serialization** of a large
-response body.
-
-### How the flakiness risk is actually managed here
-
-The critique above is real, so both classes are deliberately built to blunt
-it rather than ignore it:
-
-| Risk | How it's mitigated |
-| --- | --- |
-| JIT warm-up skews the first run | Not fully solved — accepted as noise absorbed by a generous budget (500ms–2s for work that normally takes single-digit milliseconds), not a tight one |
-| A slow CI box makes the test flaky | Budgets are ~50–100× the expected time, wide enough to survive a busy machine, tight enough to still catch a real `O(n²)` regression |
-| Mock setup cost pollutes the measurement | `StockServicePerformanceTest` uses a hand-written in-memory `FinancialDataProvider` (a `Map` lookup) instead of 10,000 individual Mockito `when(...)` stubs; `StockScreenerPerformanceTest` uses one `thenAnswer(...)` that computes a stock on the fly instead of 1,000 stubs |
-| Non-determinism from random data | Both universes are generated with a fixed-seed `Random(42)` — the same input every run, forever |
-| "Just raise the limit until it's green" | The point of these tests is *not* to assert a tight number — a 10× regression should still fail even with room to spare; that is a coarser, more honest goal than a micro-benchmark's |
-
-**The honest framing:** these are not a substitute for JMH or a load test.
-They are a five-minute investment that fails the build if someone
-accidentally makes the screener quadratic — which is strictly better than
-finding that out from a slow production endpoint, and costs nothing beyond
-`./gradlew test`, which already runs on every change.
-
-### What a *real* performance investigation would still measure
-
-If this project needed to go further, the three things worth measuring are
-architectural, not algorithmic — and none of them are covered by the two
-classes above, because both mock away the network:
-
-1. **Cold vs. warm cache.** A warm request is a field read plus a filter — 
-   microseconds. A cold request makes **54 serial HTTP calls** to Finnhub.
-   That gap is the dominant performance fact of the system, and it's a
-   property of [ADR-001](adr/0001-no-database.md), not of any method.
-2. **The serial refresh.** 54 sequential calls at ~100ms each is ~5 seconds,
-   and it happens **on the request thread** that triggered the refresh. That
-   user waits. Parallelising or refreshing in the background is the obvious
-   optimisation — and a load test is how you'd justify it.
-3. **Timeout behaviour under a slow provider.** Connect 3s + read 5s per call
-   bounds the damage; a load test with a deliberately slow mock would show
-   whether the thread pool survives.
-
-That would need JMH or k6 against a running instance, not more JUnit tests —
-which is exactly why this project doesn't fake it with `assertTimeout` on
-something network-shaped.
+For this system, the interesting performance facts are architectural, not
+algorithmic — a warm request is a field read plus a filter (microseconds),
+while a cold request makes ~54 serial HTTP calls to Finnhub on the request
+thread (see [ADR-001](adr/0001-no-database.md)). Measuring that gap would need
+JMH or k6 against a running instance, not a JUnit `assertTimeout` on something
+network-shaped.
 
 ---
 
@@ -604,15 +543,13 @@ plugins {
 ```groovy
 testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
-testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
 testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 ```
 
 `spring-boot-starter-webmvc-test` is one line that pulls in JUnit Jupiter,
 AssertJ, Mockito, `MockMvc` and Spring's test context support — the whole
-table in §1 arrives through it, except MockWebServer, added separately
-because it's not a Spring dependency. `junit-platform-launcher` is what lets
-Gradle actually *discover and run* JUnit 5 tests, not just compile them.
+table in §1 arrives through it. `junit-platform-launcher` is what lets Gradle
+actually *discover and run* JUnit 5 tests, not just compile them.
 
 ### The `test` task
 
@@ -632,11 +569,10 @@ not, so the report shown in §7 is never stale.
 Running `./gradlew test`:
 
 1. Compiles `src/main` and `src/test` (`compileJava`, `compileTestJava`).
-2. Discovers every class under `src/test/java` with `@Test` methods —
-   including all eight classes in the table above, with no separate
-   configuration needed to include the two performance ones. There is no
-   "performance" test source set here; they're plain JUnit 5 tests that
-   happen to call `assertTimeout`.
+2. Discovers the behavioural test classes under `src/test/java` — the two in
+   the table above, 20 tests total. The `@Tag("docgen")` `OpenApiSpecExporter`
+   is deliberately **excluded** from this task (see below), so it does not run
+   here.
 3. Runs them (in parallel across classes, sequentially within a class, by
    default) and writes:
    - `build/test-results/test/*.xml` — machine-readable, one file per class
@@ -644,16 +580,29 @@ Running `./gradlew test`:
    - `build/reports/tests/test/index.html` — human-readable results.
 4. Triggers `jacocoTestReport`.
 
+The docgen exporter is kept out of the suite with a tag filter, e.g.:
+
+```groovy
+tasks.named('test') {
+    useJUnitPlatform { excludeTags 'docgen' }
+    finalizedBy tasks.named('jacocoTestReport')
+}
+```
+
+`OpenApiSpecExporter` runs only via `./gradlew generateOpenApiSpec` (which
+`./gradlew exportOpenApiSpec` depends on), which writes the spec to
+`build/openapi/`. It boots a Spring context but asserts nothing about
+behaviour — it's a build utility, not one of the 20 tests.
+
 ### Useful task invocations
 
 ```bash
-./gradlew test                                  # everything
+./gradlew test                                  # everything (20 tests)
 ./gradlew test --tests '*StockServiceTest*'      # one class
-./gradlew test --tests '*Performance*'           # just the two performance classes
 ./gradlew test --tests '*.CachingAndResilience'  # one @Nested group
 ./gradlew test --rerun                           # ignore Gradle's up-to-date cache
 ./gradlew bootRun                                # run the app for real
-./gradlew exportOpenApiSpec                      # regenerate docs/openapi.yaml (see docs/API.md)
+./gradlew exportOpenApiSpec                      # regenerate docs/openapi.yaml (runs the docgen exporter)
 ```
 
 **`--rerun` matters for this project specifically.** Gradle skips `test`
@@ -697,30 +646,36 @@ The HTML report is colour-coded per line:
 
 | Metric | Meaning | Here |
 | --- | --- | --- |
-| **Instruction** | Bytecode instructions executed | **97.5%** |
-| **Branch** | `if`/`switch`/`?:` outcomes taken | **86.5%** |
+| **Instruction** | Bytecode instructions executed | **63.0%** |
+| **Branch** | `if`/`switch`/`?:` outcomes taken | **49.0%** |
 | **Line** | Source lines touched | 97.0% |
 | **Method** | Methods called at least once | 100% |
 
 **Branch coverage is the number to watch.** Line coverage counts a line as
 covered if it ran at all; branch coverage asks whether *both* outcomes
 happened. `if (a || b)` on one line can be "100% line covered" with three of
-four branches untested. That's why 97.5% instruction and 86.5% branch coexist
-here — and the branch number is the honest one.
+four branches untested. The branch number is the honest one — and here it
+tells a blunt story.
 
 ### What the report found in this project
 
-Coverage is a **map of where you haven't looked**. Reading the yellow and red
-in this codebase surfaced four genuine gaps:
+Coverage is a **map of where you haven't looked**, and the biggest blank
+region is obvious: the entire `FinnhubStockProvider` client — the class that
+talks to Finnhub over HTTP and maps the raw JSON into `Stock` objects — has
+**no automated test at all**. Its raw HTTP mapping is only ever exercised by
+hand against the live API. That single gap is what dragged instruction
+coverage from ~97% down to 63% and branch coverage to 49%. `StockController`
+and its error/validation mapping stay covered, because the full-stack
+integration tests drive them end-to-end.
+
+Reading the yellow and red also surfaces a subtler gap that survives even
+where a class *is* tested:
 
 | Location | Untested | Real risk? |
 | --- | --- | --- |
-| `StockService:151` | The double-check inside `synchronized refresh()` — "another thread refreshed while we waited" | **Yes.** All 66 tests are single-threaded, so no test has ever exercised the concurrency guard. |
-| `FinnhubStockProvider:103` | `catch (ResourceAccessException e)` | **Yes, and it's instructive.** There *is* a timeout test — but it exits through the *other* catch, via `hasIoCause()`. Coverage proves the first path is never taken by any test. |
-| `FinnhubStockProvider:128` | `marketCapMillions() == null` | Yes — a profile with no market cap is realistic and untested. |
-| `FinnhubStockProvider:140` | `firstMetric` returning null when the metric map exists but has none of the known keys | Yes — likely, given Finnhub doesn't document those field names. |
+| `StockService:151` | The double-check inside `synchronized refresh()` — "another thread refreshed while we waited" | **Yes.** All 20 tests are single-threaded, so no test has ever exercised the concurrency guard. |
 
-None of those are visible by reading the tests. That is what coverage is for.
+That one is invisible by reading the tests. That is what coverage is for.
 
 ### Excluded from the numbers
 
@@ -733,7 +688,8 @@ exclude: [
 
 `main()` and the `@Configuration` classes are framework wiring with no branches
 to get wrong. Including them would inflate the percentage with code whose only
-meaningful test is "the app starts" — which `contextLoads` already covers.
+meaningful test is "the app starts" — which every `@SpringBootTest` in
+`StockScreenerIntegrationTest` already exercises by booting the context.
 **Exclusions should be justified, not used to hide untested logic.**
 
 ### Why 100% is the wrong goal
@@ -758,10 +714,12 @@ to test the concurrency double-check is fine. Not *knowing* it was untested
 is not.
 
 Useful targets: **~80% branch coverage** as a floor, with 100% on the classes
-holding real business rules. This project sits at 92% branch on `StockService`
-and 76.5% on `FinnhubStockProvider` — which correctly says the screening logic
-is well covered and the error-handling paths of the API client are the weaker
-half.
+holding real business rules. This project keeps high branch coverage on
+`StockService` — the screening logic — but `FinnhubStockProvider` sits at
+**0%**, because no test touches the API client at all. That split is honest:
+the business rules are well covered, and the untested API client is the
+project's single biggest coverage gap, an acknowledged trade-off of the
+20-test suite rather than an oversight.
 
 ### Enforcing a minimum
 

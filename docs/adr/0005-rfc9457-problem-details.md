@@ -71,7 +71,7 @@ method; the controller does not change.
 **What it buys**
 
 - Clients parse one structure for every error.
-- The contract is directly testable: `StockControllerTest` asserts exact
-  `$.detail` strings for the 400/404/503 paths, so a change in error wording
-  fails a test rather than silently breaking a client.
+- The contract is directly testable: `StockScreenerIntegrationTest` asserts
+  exact `$.detail` strings for the 400/404/503 paths, so a change in error
+  wording fails a test rather than silently breaking a client.
 - Status-code policy lives in one file and can be reviewed as a whole.

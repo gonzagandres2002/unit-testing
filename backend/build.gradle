@@ -39,14 +39,29 @@ dependencies {
 
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
-	testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.named('test') {
-	useJUnitPlatform()
+	useJUnitPlatform {
+		// 'docgen' is the OpenAPI spec exporter, a build utility rather than a
+		// behavioral test; it runs via generateOpenApiSpec, not the test suite.
+		excludeTags 'docgen'
+	}
 	// Coverage is only useful if it is never stale, so every test run refreshes it.
 	finalizedBy tasks.named('jacocoTestReport')
+}
+
+// Runs only the 'docgen'-tagged OpenApiSpecExporter to (re)produce the spec under
+// build/openapi/. Kept out of `test` so the suite stays at the 20 behavioral tests.
+tasks.register('generateOpenApiSpec', Test) {
+	group = 'documentation'
+	description = 'Exports the live OpenAPI spec to build/openapi/.'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform {
+		includeTags 'docgen'
+	}
 }
 
 jacoco {
@@ -76,13 +91,13 @@ tasks.named('jacocoTestReport') {
 //
 //     ./gradlew exportOpenApiSpec
 //
-// OpenApiDocsTest asks the running context for /v3/api-docs.yaml and writes it
-// to build/openapi/; this copies it into docs/. The committed spec is therefore
-// generated output — edit the controller or its Javadoc, not the YAML.
+// OpenApiSpecExporter asks the running context for /v3/api-docs.yaml and writes
+// it to build/openapi/; this copies it into docs/. The committed spec is
+// therefore generated output — edit the controller or its Javadoc, not the YAML.
 tasks.register('exportOpenApiSpec', Copy) {
 	group = 'documentation'
 	description = 'Regenerates docs/openapi.yaml from the live OpenAPI endpoint.'
-	dependsOn tasks.named('test')
+	dependsOn tasks.named('generateOpenApiSpec')
 	from layout.buildDirectory.dir('openapi')
 	include 'openapi.yaml'
 	into file('../docs')

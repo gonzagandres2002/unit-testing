@@ -195,7 +195,7 @@ public class StockService {
 
 **Why separate it from the controller?**
 
-- **It's testable.** `StockServiceTest` runs 27 tests with no server, no
+- **It's testable.** `StockServiceTest` runs 10 tests with no server, no
   network, in milliseconds — impossible if the logic lived in the controller.
 - **It's reusable.** If you later add a scheduled job or a CLI, both call the
   same service. The rules exist once.
@@ -470,8 +470,8 @@ need an upward call, you've usually got the layers wrong.
 **Line 5 is the interesting one.** `StockService` holds a field of type
 `FinancialDataProvider` — an interface. It calls `fetchStock()` on it. It does
 not know, and cannot find out, whether the object on the other end is a
-`FinnhubStockProvider` or a Mockito fake. That single fact is what makes 27 of
-the 57 tests possible.
+`FinnhubStockProvider` or a Mockito fake. That single fact is what makes the 10
+`StockServiceTest` unit tests possible.
 
 ---
 
@@ -601,15 +601,18 @@ start with a clear message rather than throwing a `NullPointerException` later.
 **Because the test can supply something different.**
 
 ```java
-@WebMvcTest(StockController.class)
-class StockControllerTest {
-    @MockitoBean private StockService stockService;   // fake, not the real one
+@SpringBootTest
+@AutoConfigureMockMvc
+class StockScreenerIntegrationTest {
+    @MockitoBean private FinancialDataProvider provider;   // fake, not the real one
 }
 ```
 
-The controller is unchanged. It asked for a `StockService` and got one — a fake
-that returns whatever the test wants. If the controller had used `new
-StockService(...)` internally, no test could ever get between them.
+Every class is the real one — controller, service, exception handler — except
+the provider, where Spring injects a Mockito fake instead of `FinnhubStockProvider`.
+The service is unchanged: it asked for a `FinancialDataProvider` and got one — a
+fake that returns whatever the test wants. If the service had used `new
+FinnhubStockProvider(...)` internally, no test could ever get between them.
 
 **Always inject through the constructor**, as this codebase does. It lets every
 field be `final`, makes dependencies impossible to overlook, and means the
@@ -643,21 +646,26 @@ layer needs a `catch`.
 
 ## 16. Why this shape makes testing possible
 
-The layers aren't decoration — they're what the 57 tests are built on. Each
-test targets one layer and fakes everything below it:
+The layers aren't decoration — they're what the 20 tests are built on. Each
+test targets a level of the stack and fakes only what lies below the provider:
 
 | Test | Real | Faked | Result |
 | --- | --- | --- | --- |
-| `StockServiceTest` (27) | The service | Provider (Mockito), `Clock` | Business rules, no network |
-| `FinnhubStockProviderTest` (10) | The provider | Finnhub (local `MockWebServer`) | HTTP 500, 429, timeouts, bad JSON |
-| `StockControllerTest` (11) | Web layer only | The service | Validation, JSON, status codes |
-| `StockScreenerIntegrationTest` (3) | Everything | Only the provider | The layers really connect |
-| `StocklensApplicationTests` (1) | Everything | — | The app starts and wires up |
-| `OpenApiDocsTest` (5) | Everything | — | The generated docs are correct |
+| `StockServiceTest` (10) | The service | Provider (Mockito), `Clock` | Business rules, no network |
+| `StockScreenerIntegrationTest` (10) | Everything: HTTP → controller → service | Only the provider (Mockito) | Full stack connects; validation `400`s, `404`, `503` over real HTTP |
 
 Notice the pattern: **each seam in the architecture is a place a test can cut.**
-No seams, no unit tests. This is the practical payoff of the whole structure —
-57 tests that run in about five seconds without touching the network.
+The provider interface is the one seam these tests need — above it, nothing is
+faked. The unit suite cuts at the provider and drives the service directly; the
+integration suite leaves the whole stack real and cuts at the same seam,
+exercising the HTTP contract (validation `400`s, a `404`, a `503`) end to end.
+This is the practical payoff of the whole structure — 20 tests that run in
+seconds without touching the network.
+
+One honest gap: `FinnhubStockProvider` itself — the code that actually speaks to
+Finnhub — has no automated test. Everything above the provider interface is
+covered; the provider implementation is exercised only by hand. That is the
+direct reason instruction coverage sits around 63% rather than the high 90s.
 
 ---
 

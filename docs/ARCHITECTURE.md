@@ -197,39 +197,45 @@ are read from Javadoc at runtime via therapi.
 
 ## Testing architecture
 
-66 tests, four tiers, no network access. Run with `./gradlew test`. Full
-walkthrough — including where the Arrange-Act-Assert pattern is applied and
-how the performance tests avoid the usual `assertTimeout` flakiness traps —
-in [`TESTING.md`](TESTING.md).
+20 tests, two tiers, no network access. Run with `./gradlew test`. Full
+walkthrough — including where the Arrange-Act-Assert pattern is applied — in
+[`TESTING.md`](TESTING.md).
 
 | Tier | Class | Spring? | External dependency |
 | --- | --- | --- | --- |
-| Unit | `StockServiceTest` (29) | none | Mockito-mocked provider, hand-advanced clock |
-| Unit | `FinnhubStockProviderTest` (10) | none | Real local HTTP server (MockWebServer) |
-| Slice | `StockControllerTest` (13) | `@WebMvcTest` — web layer only | Mocked service |
-| Integration | `StockScreenerIntegrationTest` (3) | `@SpringBootTest` — full context | Only the provider mocked |
-| Smoke | `StocklensApplicationTests` (1) | `@SpringBootTest` | — |
-| Docs | `OpenApiDocsTest` (5) | `@SpringBootTest` | — |
-| Performance | `StockServicePerformanceTest` (3) | none | In-memory fake provider, 10,000-stock synthetic universe |
-| Performance | `StockScreenerPerformanceTest` (2) | `@SpringBootTest` — full context | Mocked provider, 1,000-ticker synthetic universe |
+| Unit | `StockServiceTest` (10) | none | Mockito-mocked provider, hand-advanced clock |
+| Integration | `StockScreenerIntegrationTest` (10) | `@SpringBootTest` + MockMvc — full stack | Only the provider mocked |
 
-Two details that are easy to break:
+One detail that is easy to break:
 
 - `StockScreenerIntegrationTest` needs
   `@DirtiesContext(AFTER_EACH_TEST_METHOD)` because `StockService`'s cache is
   stateful. Without it, a snapshot cached by an earlier test leaks into the
   cold-cache `503` test and it fails.
-- `FinnhubStockProviderTest` sets 500 ms timeouts and delays a response by
-  2 s to exercise the timeout path. Shortening the delay or lengthening the
-  timeout silently disables that test's purpose.
 
-`OpenApiDocsTest` is worth a note: generated documentation can still be
-generated *wrongly*. It pins that both endpoints appear, that the error
-responses are attached (and that `404` is **not** attached to the screener,
-which returns `[]` instead), and that descriptions are actually populated from
-Javadoc — which silently become empty if the therapi annotation processor is
-dropped from `build.gradle`. It also exports the spec that
-`./gradlew exportOpenApiSpec` copies to `docs/openapi.yaml`.
+**What each tier covers.** `StockServiceTest` exercises the business logic
+directly: search, filter boundaries (including missing metrics), nulls-last
+sorting, TTL caching, stale-serving on a rate limit, and single-ticker lookup.
+`StockScreenerIntegrationTest` drives the full HTTP → controller → service
+stack through `MockMvc` — default and filtered screening, search and detail,
+a cold-cache outage returning `503`, an unknown ticker returning `404`, and
+the `400` validation contract. It now absorbs the web-layer HTTP checks that
+used to live in a separate `@WebMvcTest` slice, so the web layer is covered
+end-to-end rather than in isolation.
+
+**Coverage, honestly.** The `FinnhubStockProvider` Finnhub client is now the
+main untested area — it has no automated test, which is the biggest coverage
+gap. That is the chief reason overall coverage sits at **63.0 %** instruction /
+**49.0 %** branch, down from the previously reported 97.5 % / 86.5 %. Everything
+above the provider boundary — the service logic and the full web stack — stays
+covered by the two tiers above.
+
+The OpenAPI spec is *generated output*, not hand-written: the
+`OpenApiSpecExporter` build utility (`@Tag("docgen")`, `@SpringBootTest`)
+writes it to `build/openapi/`. It is **excluded** from `./gradlew test` and run
+on demand via `./gradlew generateOpenApiSpec` (on which `exportOpenApiSpec`
+depends to copy the spec into `docs/openapi.yaml`). Because it is a utility and
+not an assertion, it is not counted among the 20 tests.
 
 **No Testcontainers**, because there is no database — see
 [ADR-001](adr/0001-no-database.md).

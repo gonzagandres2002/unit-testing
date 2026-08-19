@@ -25,11 +25,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Integration tests through the full HTTP → controller → service stack, with
  * only the external provider replaced by a mock. The context is rebuilt per
- * test because the service cache is stateful.
+ * test because the service cache is stateful. These ten tests are the whole
+ * integration layer: they exercise the happy-path screening and detail
+ * endpoints end to end, the graceful-degradation path, and the HTTP contract
+ * (validation and error mapping) that a client depends on.
  *
  * <p>Each test follows the Arrange-Act-Assert (AAA) pattern: Arrange stubs
  * the mocked {@link FinancialDataProvider} (via {@link #givenHealthyProvider()}
- * or an inline stub), Act performs the HTTP request(s) under test, and Assert
+ * or an inline stub) where the request reaches the service — validation
+ * failures are rejected before the service is ever called, so they have
+ * nothing to arrange — Act performs the HTTP request(s) under test, and Assert
  * checks the response.
  */
 @SpringBootTest(properties = "stocklens.screener.tickers=MSFT,GOOGL,AAPL")
@@ -55,6 +60,22 @@ class StockScreenerIntegrationTest {
 			.thenReturn(Optional.of(stock("GOOGL", "Alphabet", 201.1, 27.2, 2.4e12)));
 		when(provider.fetchStock("AAPL"))
 			.thenReturn(Optional.of(stock("AAPL", "Apple", 230.5, 34.0, 3.5e12)));
+	}
+
+	@Test
+	void defaultRequestSortsByMarketCapDescending() throws Exception {
+		// Arrange
+		givenHealthyProvider();
+
+		// Act
+		ResultActions response = mockMvc.perform(get("/api/stocks"));
+
+		// Assert
+		response.andExpect(status().isOk())
+			.andExpect(jsonPath("$.length()").value(3))
+			.andExpect(jsonPath("$[0].ticker").value("AAPL"))
+			.andExpect(jsonPath("$[1].ticker").value("MSFT"))
+			.andExpect(jsonPath("$[2].ticker").value("GOOGL"));
 	}
 
 	@Test
@@ -108,5 +129,70 @@ class StockScreenerIntegrationTest {
 		// Assert
 		response.andExpect(status().isServiceUnavailable())
 			.andExpect(jsonPath("$.status").value(503));
+	}
+
+	@Test
+	void unknownTickerYields404ProblemDetail() throws Exception {
+		// Arrange — a valid symbol that is not in the configured universe
+		givenHealthyProvider();
+
+		// Act
+		ResultActions response = mockMvc.perform(get("/api/stocks/ZZZZ"));
+
+		// Assert
+		response.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.detail").value("No stock found for ticker 'ZZZZ'"));
+	}
+
+	@Test
+	void zeroMaxPeIsRejected() throws Exception {
+		// Arrange — no stubbing needed; validation happens before the service is called
+
+		// Act & Assert
+		mockMvc.perform(get("/api/stocks").param("maxPe", "0"))
+			.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void negativeMinMarketCapIsRejected() throws Exception {
+		// Arrange — no stubbing needed; validation happens before the service is called
+
+		// Act & Assert
+		mockMvc.perform(get("/api/stocks").param("minMarketCap", "-1"))
+			.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void nonNumericFilterValueIsRejected() throws Exception {
+		// Arrange — no stubbing needed; validation happens before the service is called
+
+		// Act
+		ResultActions response = mockMvc.perform(get("/api/stocks").param("maxPe", "cheap"));
+
+		// Assert
+		response.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value("Parameter 'maxPe' has an invalid value"));
+	}
+
+	@Test
+	void unknownSortFieldIsRejected() throws Exception {
+		// Arrange — no stubbing needed; validation happens before the service is called
+
+		// Act
+		ResultActions response = mockMvc.perform(get("/api/stocks").param("sortBy", "volume"));
+
+		// Assert
+		response.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value(
+					"Unknown sortBy 'volume'; expected one of: name, price, pe, marketCap"));
+	}
+
+	@Test
+	void malformedTickerIsRejected() throws Exception {
+		// Arrange — no stubbing needed; validation happens before the service is called
+
+		// Act & Assert
+		mockMvc.perform(get("/api/stocks/{ticker}", "MS FT!"))
+			.andExpect(status().isBadRequest());
 	}
 }

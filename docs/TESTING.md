@@ -1,19 +1,24 @@
 # Testing
 
 How this project is tested, and the concepts behind it. Every example is real
-code from `backend/src/test/`.
+code from the one test class in the suite:
+[`StockServiceTest`](../backend/src/test/java/com/stocklens/service/StockServiceTest.java).
 
-**Read in order:** §1–2 for the vocabulary and the AAA pattern. §3 for unit
-testing (the bulk of it). §4 integration testing. §5 performance. §6 coverage.
+The suite is deliberately small: **10 unit tests over `StockService`**, written
+for a unit-testing practice. Each test follows the **Arrange-Act-Assert**
+pattern with the phases explicitly marked, and the set is split into happy
+paths (1–4) and boundaries/unhappy paths (5–10). Earlier revisions of this
+repo carried a 57-test pyramid (unit + slice + integration + performance);
+see [§5](#5-what-this-suite-deliberately-leaves-out) for what was cut and why
+it would matter in a real project — `git log` has the full version.
 
 **Quick commands**
 
 ```bash
 cd backend
-./gradlew test                              # 57 tests + coverage report
-./gradlew test --tests '*StockServiceTest*' # one class
-open build/reports/tests/test/index.html            # test results
-open build/reports/jacoco/test/html/index.html      # coverage
+./gradlew test                                   # 10 tests + coverage report
+open build/reports/tests/test/index.html         # test results
+open build/reports/jacoco/test/html/index.html   # coverage
 ```
 
 ---
@@ -25,10 +30,15 @@ result is wrong.
 
 ```java
 @Test
-void findsExistingCompanyByTickerIgnoringCase() {
-    serviceWith(MSFT, GOOGL, AAPL);
-    assertThat(tickers(service.search(query("aapl", null, null))))
-        .containsExactly("AAPL");
+void maxPeBoundaryIsInclusive() {
+    // Arrange — MSFT's P/E is exactly 29.5, AAPL's is 30.1
+    serviceWith(MSFT, AAPL);
+
+    // Act
+    List<Stock> results = service.search(query(null, 29.5, null));
+
+    // Assert — a P/E exactly on the limit passes the filter
+    assertThat(tickers(results)).containsExactly("MSFT");
 }
 ```
 
@@ -42,16 +52,14 @@ of twenty minutes of clicking.
 
 ### The libraries here
 
-| Library | Version | Job |
-| --- | --- | --- |
-| **JUnit Jupiter** | 6.0.3 | Finds and runs tests (`@Test`, `@Nested`, `@BeforeEach`) |
-| **AssertJ** | 3.27.7 | Readable assertions (`assertThat(x).isEqualTo(y)`) |
-| **Mockito** | 5.23.0 | Fake collaborators (`when(...).thenReturn(...)`) |
-| **MockWebServer** | 4.12.0 | A real HTTP server on localhost, for testing the API client |
-| **Spring Boot Test** | 4.1.0 | `@SpringBootTest`, `@WebMvcTest`, `MockMvc` |
+| Library | Job |
+| --- | --- |
+| **JUnit Jupiter** | Finds and runs tests (`@Test`, `@ExtendWith`) |
+| **AssertJ** | Readable assertions (`assertThat(x).isEqualTo(y)`, `assertThatThrownBy`) |
+| **Mockito** | Fakes the provider (`@Mock`, `when(...).thenReturn(...)`) |
 
-All arrive through `spring-boot-starter-webmvc-test` except MockWebServer.
-You don't pick their versions — the Spring Boot BOM does.
+No Spring is involved anywhere in the suite: the tests construct
+`StockService` with `new`, which is exactly what makes them unit tests.
 
 ---
 
@@ -70,41 +78,45 @@ words — Given/When/Then comes from BDD and is common in test *names*.
 
 ### A textbook example from this project
 
+Test 10 is the richest Arrange in the suite — it has to build a *history*
+(cache primed, time passed, provider now failing) before the Act:
+
 ```java
 @Test
-void expiredCacheIsRefreshedFromProvider() {
-    // ARRANGE — a service over two tickers, provider stubbed
+void failedRefreshServesStaleDataInsteadOfFailing() {
+    // Arrange — a successful fetch primes the cache, then the TTL expires
+    // and the provider starts rejecting calls
     serviceWith(MSFT, GOOGL);
-    service.search(query(null, null, null));   // prime the cache
-    clock.advance(TTL.plusSeconds(1));         // move past the TTL
-
-    // ACT — the call under test
     service.search(query(null, null, null));
+    clock.advance(TTL.plusSeconds(1));
+    when(provider.fetchStock(anyString())).thenThrow(new RateLimitedException("HTTP 429"));
 
-    // ASSERT — it went back to the provider (2 tickers x 2 refreshes)
-    verify(provider, times(4)).fetchStock(anyString());
+    // Act — this search triggers a refresh that fails
+    List<Stock> results = service.search(query(null, null, null));
+
+    // Assert — graceful degradation: stale data, not an exception
+    assertThat(tickers(results)).containsExactlyInAnyOrder("MSFT", "GOOGL");
 }
 ```
+
+Note the first `service.search(...)` is **Arrange**, not Act — it exists to
+put the cache in a known state. The Act is the *second* call, the one whose
+behavior the test name describes.
 
 ### Why the order matters
 
 **One Act per test.** If a test calls three different methods, a failure
 doesn't tell you which one broke. The name should describe one behaviour.
+(Test 7 runs the same sort in both directions — two calls, but one behaviour:
+"missing metric goes last *in both directions*". The invariant is the Act.)
 
 **Assert after Act, never during.** Assertions inside the arrange phase are
 testing your setup, not your code.
 
 **No logic in the test.** No `if`, no loops over cases, no computing the
 expected value with the same formula the code uses. Write the expected value
-as a literal:
-
-```java
-// GOOD — a human decided the answer is 3.1e12
-assertThat(stock.marketCap()).isEqualTo(3.1e12);
-
-// BAD — if the conversion is wrong, the test is wrong the same way
-assertThat(stock.marketCap()).isEqualTo(profile.marketCapMillions() * 1_000_000d);
-```
+as a literal: the test asserts `containsExactly("GOOGL", "MSFT", "NODATA")`
+because a human decided that order, not because the test re-sorted the list.
 
 ### AAA when the Act throws
 
@@ -113,12 +125,14 @@ the assertion:
 
 ```java
 @Test
-void httpErrorBecomesFinancialDataException() {
-    server.enqueue(new MockResponse().setResponseCode(500));         // Arrange
+void unknownTickerThrowsStockNotFound() {
+    // Arrange — ZZZZ is not part of the screened universe
+    serviceWith(MSFT, GOOGL);
 
-    assertThatThrownBy(() -> provider.fetchStock("MSFT"))            // Act + Assert
-        .isInstanceOf(FinancialDataException.class)
-        .hasMessageContaining("HTTP 500");
+    // Act + Assert — the call under test lives inside the assertion
+    assertThatThrownBy(() -> service.getByTicker("ZZZZ"))
+        .isInstanceOf(StockNotFoundException.class)
+        .hasMessageContaining("ZZZZ");
 }
 ```
 
@@ -127,7 +141,7 @@ This is normal and correct. `assertThatThrownBy` (AssertJ) and
 
 ### Where the Arrange phase goes when it repeats
 
-Most tests here share setup. Rather than repeating it, it moves into a helper:
+Most tests share setup. Rather than repeating it, it moves into a helper:
 
 ```java
 /** Configures a universe of the given stocks and stubs the provider with them. */
@@ -141,23 +155,17 @@ private StockService serviceWith(Stock... stocks) {
 
 Now the Arrange phase of a test is one readable line. The trade-off: setup is
 no longer visible in the test body, so the helper must be small and obviously
-named. `@BeforeEach` does the same job for setup that is identical everywhere.
+named.
 
 ---
 
 ## 3. Unit testing
 
-### What makes a test a unit test
+### What makes these tests unit tests
 
-It exercises **one class** with everything it depends on replaced by fakes.
-No network, no database, no framework, no clock, no filesystem.
-
-The practical test: a unit test is **fast** (milliseconds), **deterministic**
-(same result every run, forever), and **isolated** (its result doesn't depend
-on any other test).
-
-`StockServiceTest` is the model: 27 tests, real `StockService`, fake provider,
-fake clock, no Spring context at all.
+Each one exercises **one class** — `StockService` — with everything it
+depends on replaced by fakes. No network, no database, no framework, no real
+clock, no filesystem.
 
 ```java
 @ExtendWith(MockitoExtension.class)   // enables @Mock, no Spring involved
@@ -172,46 +180,59 @@ class StockServiceTest {
 }
 ```
 
+The practical test: a unit test is **fast** (milliseconds), **deterministic**
+(same result every run, forever), and **isolated** (its result doesn't depend
+on any other test).
+
+### The 10 tests
+
+| # | Path | Test | The rule it pins down |
+| --- | --- | --- | --- |
+| 1 | Happy | `searchWithoutFiltersReturnsWholeUniverse` | No filters → everything comes back |
+| 2 | Happy | `textSearchMatchesCompanyNameIgnoringCase` | `"micRO"` finds Microsoft |
+| 3 | Happy | `maxPeBoundaryIsInclusive` | A P/E exactly on the limit **passes** |
+| 4 | Happy | `getByTickerIgnoresCaseAndWhitespace` | `" msft "` finds MSFT |
+| 5 | Unhappy | `companyWithNullPeIsExcludedByPeFilter` | "Unknown P/E" is not "cheap" |
+| 6 | Boundary | `negativePeStillPassesMaxPeFilter` | A reported loss is below any positive ceiling |
+| 7 | Boundary | `companyMissingTheSortedMetricGoesLastInBothDirections` | Reversing the sort must not promote missing data |
+| 8 | Unhappy | `unknownTickerThrowsStockNotFound` | Absent ticker → domain exception, not `null` |
+| 9 | Unhappy | `rateLimitWithColdCacheThrowsDataUnavailable` | Cold cache + 429 → `DataUnavailableException` |
+| 10 | Unhappy | `failedRefreshServesStaleDataInsteadOfFailing` | Warm cache + 429 → stale data, **no** exception |
+
+Tests 9 and 10 are a deliberate pair: the *same* provider failure produces
+opposite outcomes depending on cache state. The behavior under test is not
+the error — it's the service's **policy** toward the error.
+
+### Why boundaries outnumber happy paths
+
+The happy path is the easy case and rarely where bugs live. Six of the ten
+tests target edges: exactly on the limit (3), missing data (5, 7), a negative
+value (6), an absent key (8), and failure of the outside world (9, 10). Each
+edge is one `if` in `StockService` that could be written wrong — inclusive vs
+exclusive is the difference between `>` and `>=`.
+
 ### Test doubles
 
-"Mock" is used loosely to mean any fake. The precise vocabulary:
+"Mock" is used loosely to mean any fake. The precise vocabulary, mapped to
+this suite:
 
 | Kind | What it does | Example here |
 | --- | --- | --- |
-| **Dummy** | Passed to satisfy a signature, never used | `new StockLensProperties(null, screener)` |
-| **Stub** | Returns canned answers | `when(provider.fetchStock("MSFT")).thenReturn(...)` |
-| **Mock** | A stub you also assert *was called* | `verify(provider, times(1)).fetchStock(...)` |
-| **Fake** | A real but simplified implementation | `MutableClock`, `MockWebServer` |
-| **Spy** | Wraps a real object, records calls | *not used here* |
+| **Dummy** | Passed to satisfy a signature, never used | the `null` Finnhub config in `new StockLensProperties(null, screener)` |
+| **Stub** | Returns canned answers | `when(provider.fetchStock("MSFT")).thenReturn(Optional.of(MSFT))` |
+| **Mock** | A stub you also assert *was called* | *not needed in these 10* — every assert is on a returned value |
+| **Fake** | A real but simplified implementation | `MutableClock` |
 
-The distinction that matters: a **stub** helps you arrange, a **mock** is part
-of your assertion. Verifying calls couples the test to *how* the code works,
-so use it only when the interaction **is** the behaviour:
-
-```java
-// The requirement IS "stop calling after a 429" — so verifying the call count
-// is the only way to express it.
-verify(provider, times(1)).fetchStock(anyString());
-```
-
-### Mockito in four calls
-
-```java
-when(provider.fetchStock("MSFT")).thenReturn(Optional.of(MSFT));   // stub
-when(provider.fetchStock(any())).thenThrow(new RateLimitedException("429"));  // stub a throw
-verify(provider, times(4)).fetchStock(anyString());                // assert it was called
-ArgumentCaptor<StockQuery> captor = ArgumentCaptor.forClass(StockQuery.class);
-verify(stockService).search(captor.capture());                     // capture the argument
-```
-
-`ArgumentCaptor` answers "what exactly was passed?" — used in
-`StockControllerTest` to prove the controller translated `?sortBy=pe` into
-`SortBy.PE` without depending on the service at all.
+The distinction that matters: a **stub** helps you arrange; a **mock** (in
+the strict sense, with `verify(...)`) is part of your assertion. Verifying
+calls couples the test to *how* the code works, so this suite asserts on
+values instead — the returned lists and thrown exceptions are the observable
+behavior.
 
 ### Determinism: the injected clock
 
 The rule "a test must give the same answer every time" is why `Clock` is a
-constructor parameter and not `Instant.now()`:
+constructor parameter of `StockService` and not `Instant.now()` inside it:
 
 ```java
 private static final class MutableClock extends Clock {
@@ -221,10 +242,12 @@ private static final class MutableClock extends Clock {
 }
 ```
 
-A 10-minute TTL is then tested in microseconds. The alternative —
-`Thread.sleep` with a shortened TTL — is slow *and* flaky, because it fails
-whenever the machine is briefly busy. **Any test containing `sleep` is a bug
-waiting to happen.**
+Test 10 "waits" ten minutes by calling `clock.advance(TTL.plusSeconds(1))` —
+in microseconds. The alternative — `Thread.sleep` with a shortened TTL — is
+slow *and* flaky, because it fails whenever the machine is briefly busy.
+**Any test containing `sleep` is a bug waiting to happen.**
+See [`adr/0004-inject-clock.md`](adr/0004-inject-clock.md) for the decision
+in full.
 
 ### Naming
 
@@ -232,240 +255,17 @@ The name is the specification. It should say what holds, so a failure report
 is readable without opening the file:
 
 ```
-maxPeKeepsOnlyCheaperCompaniesAndTreatsBoundaryAsInclusive
-companiesMissingTheSortedMetricGoLastInBothDirections
-rateLimitWithoutCacheMeansDataUnavailable
-missingApiKeyFailsFastWithoutCallingTheApi
+maxPeBoundaryIsInclusive
+companyMissingTheSortedMetricGoesLastInBothDirections
+failedRefreshServesStaleDataInsteadOfFailing
 ```
 
 Not `testSearch1`, `testSearch2`. If you can't name it in one clause, the test
 is probably doing two things.
 
-### Grouping with `@Nested`
-
-`StockServiceTest` has 27 tests split into five inner classes:
-
-```java
-@Nested class Search { ... }
-@Nested class Filtering { ... }
-@Nested class Sorting { ... }
-@Nested class CachingAndResilience { ... }
-@Nested class SingleStockLookup { ... }
-```
-
-Results are then reported grouped, and each group can have its own setup.
-
-### What to test: boundaries, not the happy path
-
-The happy path is the easy case and rarely where bugs live. The valuable
-tests target edges:
-
-| Edge | Test |
-| --- | --- |
-| Exactly on the limit | `maxPe=29.5` against a P/E of exactly 29.5 |
-| Zero | `minMarketCap=0` |
-| Negative | A company with P/E `-8.2` |
-| Absent data | A stock with `null` P/E and `null` market cap |
-| Empty input | Blank search string |
-| Huge value | `minMarketCap=1e12` → empty result |
-| Failure | Provider throws on one ticker, on all tickers, or rate-limits |
-
-That list is why `StockServiceTest` is 27 tests for a class with two public
-methods.
-
 ---
 
-## 4. Integration testing
-
-### The difference
-
-| | Unit test | Integration test |
-| --- | --- | --- |
-| Scope | One class | Several, wired together |
-| Collaborators | All faked | Real, except external systems |
-| Speed | Milliseconds | Hundreds of ms to seconds |
-| Finds | Logic errors | **Wiring** errors |
-| Count | Many | Few |
-
-A unit test proves each piece is right. An integration test proves the pieces
-are **connected** right. Both can pass individually while the app is broken —
-that's precisely the gap integration tests close.
-
-### The pyramid
-
-```
-        ╱  few  ╲        integration — slow, broad, catches wiring
-      ╱─────────╲
-    ╱    many    ╲       unit — fast, narrow, catches logic
-  ╱───────────────╲
-```
-
-This project: **37 pure unit tests** (no Spring at all) and **20 that boot
-some or all of Spring** — 11 in the `@WebMvcTest` slice, 9 across the full
-context. Deliberate. Each `@SpringBootTest` class pays for a Spring context, so
-those tests cover connections, not permutations.
-
-### Slice tests — the middle tier
-
-`@WebMvcTest` starts *only* the web layer. Real JSON serialization, real
-validation, real exception handler — but no service, no provider, no cache.
-
-```java
-@WebMvcTest(StockController.class)
-class StockControllerTest {
-
-    @Autowired  private MockMvc mockMvc;
-    @MockitoBean private StockService stockService;   // replaced with a fake
-
-    @Test
-    void nonNumericFilterValueIsRejected() throws Exception {
-        mockMvc.perform(get("/api/stocks").param("maxPe", "cheap"))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.detail").value("Parameter 'maxPe' has an invalid value"));
-    }
-}
-```
-
-`MockMvc` sends a fake HTTP request through the real Spring machinery without
-opening a socket. `@MockitoBean` swaps a bean in the context for a Mockito
-fake.
-
-This is the sweet spot for testing an HTTP contract: it catches a wrong status
-code or a renamed JSON field, without the cost of booting everything.
-
-### Full integration
-
-```java
-@SpringBootTest(properties = "stocklens.screener.tickers=MSFT,GOOGL,AAPL")
-@AutoConfigureMockMvc
-@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
-class StockScreenerIntegrationTest {
-
-    @MockitoBean private FinancialDataProvider provider;   // ONLY the outside world is faked
-
-    @Test
-    void screensFiltersAndSortsThroughTheFullStack() throws Exception {
-        givenHealthyProvider();
-
-        mockMvc.perform(get("/api/stocks").param("maxPe", "30")
-                        .param("sortBy", "pe").param("order", "asc"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.length()").value(2))
-            .andExpect(jsonPath("$[0].ticker").value("GOOGL"));
-    }
-}
-```
-
-Everything real: controller, validation, service, cache, filtering, sorting,
-JSON. Only `FinancialDataProvider` is faked, because tests must never call
-Finnhub — that would be slow, flaky, and would burn API quota.
-
-**Three details worth copying:**
-
-1. **`properties = "..."`** overrides config for the test, shrinking the
-   universe from 18 tickers to 3.
-2. **`@DirtiesContext(AFTER_EACH_TEST_METHOD)`** rebuilds the context between
-   tests. Required here because `StockService`'s cache is **stateful** —
-   without it, a snapshot cached by test 1 leaks into test 3 and the
-   cold-cache `503` test fails. **This is the classic integration-test trap:
-   shared state between tests.**
-3. **Only three tests.** They cover the paths that unit tests structurally
-   cannot: does the whole chain connect, and does a cold-cache outage really
-   produce a 503 over HTTP.
-
-### The smoke test
-
-```java
-@SpringBootTest
-class StocklensApplicationTests {
-    @Test void contextLoads() { }
-}
-```
-
-Empty body, and one of the highest-value tests in the project. It fails if any
-bean can't be created — a missing dependency, a bad `@Value`, a duplicate
-bean. It catches "the app won't start" before anything else runs.
-
-### What *not* to do in an integration test
-
-- Don't re-test business rules. That `maxPe` is inclusive is a unit test's
-  job. Duplicating it here just makes the suite slow.
-- Don't hit real external services. Ever.
-- Don't depend on test execution order.
-
----
-
-## 5. Performance testing
-
-Different question. Correctness tests ask *"is the answer right?"*.
-Performance tests ask *"how fast, and how does it degrade under load?"*.
-
-### The tempting mistake
-
-```java
-@Test
-void searchIsFast() {
-    assertTimeout(Duration.ofMillis(50), () -> service.search(query));
-}
-```
-
-**Don't.** This looks like a performance test and is really a flakiness
-generator:
-
-- The JVM is slow for the first few thousand runs (JIT hasn't compiled yet),
-  so it measures warm-up, not steady state.
-- A garbage collection pause, a busy CI machine, or a laptop on battery
-  changes the number.
-- 50ms is arbitrary. When it fails, nobody knows if the code regressed or the
-  machine was busy, so the usual fix is to raise the limit until it stops
-  failing — at which point it asserts nothing.
-
-`assertTimeout` has a legitimate use: catching a **hang** (deadlock, infinite
-loop), with a generous limit like 10 seconds. That's a correctness test about
-termination, not a performance test.
-
-### The three real levels
-
-| Level | Question | Tool |
-| --- | --- | --- |
-| **Micro-benchmark** | How long does this method take? | **JMH** |
-| **Load test** | What happens at 500 requests/second? | **k6**, **Gatling**, **JMeter** |
-| **Profiling** | Where is the time actually going? | **async-profiler**, JFR, IntelliJ profiler |
-
-**JMH** (Java Microbenchmark Harness) is the only credible way to time Java
-code. It handles JVM warm-up, runs many iterations, prevents the optimiser
-from deleting your benchmark as dead code, and reports variance. It lives in a
-separate source set, not in `src/test/java`, because a benchmark run takes
-minutes and must not be part of `./gradlew test`.
-
-**Load testing** targets the running API over HTTP, not classes. A k6 script
-against `/api/stocks` would answer the question that actually matters for a
-web service: what does p95 latency look like at N concurrent users.
-
-### What this project would actually measure
-
-There are **no performance tests here**, and for the current scope that's the
-right call. If you added them, the three things worth measuring are all
-architectural, not algorithmic:
-
-1. **Cold vs. warm cache.** A warm request is a field read plus a filter over
-   18 items — microseconds. A cold request makes **54 serial HTTP calls** to
-   Finnhub. That gap is the dominant performance fact of the system, and it's
-   a property of [ADR-001](adr/0001-no-database.md), not of any method.
-2. **The serial refresh.** 54 sequential calls at ~100ms each is ~5 seconds,
-   and it happens **on the request thread** that triggered the refresh. That
-   user waits. Parallelising or refreshing in the background is the obvious
-   optimisation — and a load test is how you'd justify it.
-3. **Timeout behaviour under a slow provider.** Connect 3s + read 5s per call
-   bounds the damage; a load test with a deliberately slow mock would show
-   whether the thread pool survives.
-
-Note that sorting/filtering 18 records is not worth benchmarking. **Measure
-before optimising** — the cost here is I/O, not CPU.
-
----
-
-## 6. Coverage
+## 4. Coverage
 
 **Coverage = what percentage of your code ran while the tests ran.**
 
@@ -483,131 +283,95 @@ cd backend
 open build/reports/jacoco/test/html/index.html
 ```
 
-The HTML report is colour-coded per line:
+The HTML report is colour-coded per line: green = executed, red = never
+executed, and **yellow = partially covered** — an `if` where only one outcome
+happened. Yellow is the interesting colour.
 
-| Colour | Meaning |
-| --- | --- |
-| 🟩 green | Executed |
-| 🟨 yellow | **Partially covered** — an `if` where only one outcome happened |
-| 🟥 red | Never executed |
+### What the numbers say now
 
-**Yellow is the interesting colour.** It marks a branch you never exercised.
+With only the `StockService` suite, coverage is an honest map of what this
+practice does and does not test:
 
-### The metrics
+| Class | Instruction | Branch | Reading |
+| --- | --- | --- | --- |
+| `StockService` | 83.4% | 66.0% | The target of the suite. The uncovered branches are the concurrency double-check and error paths no single-threaded test reaches. |
+| `Stock`, `StockQuery`, exceptions | ~100% | — | Dragged along by the service tests. |
+| `StockQuery.SortBy` / `Direction` | 64% / 38% | **0%** | The `from(String)` parsers are **never called** — they were covered by the deleted controller tests. |
+| `FinnhubStockProvider` | **0%** | **0%** | Untested since its suite was deleted. |
+| `StockController`, `GlobalExceptionHandler` | **0%** | — | Same. |
+| **Total** | **47.9%** | **34.4%** | |
 
-| Metric | Meaning | Here |
-| --- | --- | --- |
-| **Instruction** | Bytecode instructions executed | **97.5%** |
-| **Branch** | `if`/`switch`/`?:` outcomes taken | **86.5%** |
-| **Line** | Source lines touched | 97.0% |
-| **Method** | Methods called at least once | 100% |
+Two lessons worth taking from that table:
+
+1. **Coverage is a map of where you haven't looked.** The 0% rows are not a
+   scandal — they are the *known, deliberate* consequence of scoping this
+   practice to one class. What would be a problem is not knowing they exist.
+2. **Deleting tests un-covers code you didn't delete tests for.**
+   `SortBy.from()` lives in the service package, but its coverage came
+   entirely from the web-layer tests. Coverage tells you who was really
+   testing what.
 
 **Branch coverage is the number to watch.** Line coverage counts a line as
-covered if it ran at all; branch coverage asks whether *both* outcomes
-happened. `if (a || b)` on one line can be "100% line covered" with three of
-four branches untested. That's why 97.5% instruction and 86.5% branch coexist
-here — and the branch number is the honest one.
-
-### What the report found in this project
-
-Coverage is a **map of where you haven't looked**. Reading the yellow and red
-in this codebase surfaced four genuine gaps:
-
-| Location | Untested | Real risk? |
-| --- | --- | --- |
-| `StockService:150` | The double-check inside `synchronized refresh()` — "another thread refreshed while we waited" | **Yes.** All 57 tests are single-threaded, so no test has ever exercised the concurrency guard. |
-| `FinnhubStockProvider:103` | `catch (ResourceAccessException e)` | **Yes, and it's instructive.** There *is* a timeout test — but it exits through the *other* catch, via `hasIoCause()`. Coverage proves the first path is never taken by any test. |
-| `FinnhubStockProvider:128` | `marketCapMillions() == null` | Yes — a profile with no market cap is realistic and untested. |
-| `FinnhubStockProvider:140` | `firstMetric` returning null when the metric map exists but has none of the known keys | Yes — likely, given Finnhub doesn't document those field names. |
-
-None of those are visible by reading the tests. That is what coverage is for.
-
-### Excluded from the numbers
-
-```groovy
-exclude: [
-    'com/stocklens/StocklensApplication.class',
-    'com/stocklens/config/**',
-]
-```
-
-`main()` and the `@Configuration` classes are framework wiring with no branches
-to get wrong. Including them would inflate the percentage with code whose only
-meaningful test is "the app starts" — which `contextLoads` already covers.
-**Exclusions should be justified, not used to hide untested logic.**
+covered if it ran at all; branch coverage asks whether *both* outcomes of
+every `if` happened. That's why `StockService` shows 83% instruction but 66%
+branch — the branch figure is the honest one.
 
 ### Why 100% is the wrong goal
 
-Coverage is a **necessary but not sufficient** condition. Code that never runs
-is definitely untested; code that runs is only *maybe* tested.
-
-```java
-@Test
-void uselessButFullyCovering() {
-    service.search(query(null, null, null));   // 100% coverage of search()
-}                                              // ...asserts nothing
-```
-
-That test can never fail. It contributes coverage and zero confidence.
-
-Chasing the last few percent also has a real cost: you end up writing
-contorted tests for defensive branches that can't occur, and those tests
-cement implementation details, making refactoring harder. **Use coverage to
-find the gaps you *forgot*, then judge each one.** A deliberate decision not
-to test the concurrency double-check is fine. Not *knowing* it was untested
-is not.
-
-Useful targets: **~80% branch coverage** as a floor, with 100% on the classes
-holding real business rules. This project sits at 92% branch on `StockService`
-and 76.5% on `FinnhubStockProvider` — which correctly says the screening logic
-is well covered and the error-handling paths of the API client are the weaker
-half.
-
-### Enforcing a minimum
-
-JaCoCo can fail the build below a threshold:
-
-```groovy
-tasks.named('jacocoTestCoverageVerification') {
-	violationRules {
-		rule {
-			limit { counter = 'BRANCH'; minimum = 0.80 }
-		}
-	}
-}
-tasks.named('check') { dependsOn 'jacocoTestCoverageVerification' }
-```
-
-Not enabled here — worth adding if this were a team project, where it stops
-coverage silently eroding.
-
-### Beyond coverage: mutation testing
-
-Coverage asks "did this line run?". **Mutation testing** asks the better
-question: "if I broke this line, would a test notice?"
-
-A tool like **PIT** deliberately introduces bugs — flips `>` to `>=`, replaces
-a return with `null` — reruns the tests, and reports which mutations
-**survived**. A surviving mutation is proof of a missing assertion, which is
-exactly the blind spot coverage cannot see. Given this project's
-boundary-heavy filters (`maxPe` inclusive vs exclusive is a `>` vs `>=`
-away), it would be a genuinely good fit.
-
-Not currently wired into this build.
+Coverage is a **necessary but not sufficient** condition. Code that never
+runs is definitely untested; code that runs is only *maybe* tested. A test
+that calls `search()` and asserts nothing covers every line of it and can
+never fail. **Use coverage to find the gaps you forgot, then judge each
+one** — a deliberate decision not to test the concurrency double-check is
+fine; not knowing it was untested is not.
 
 ---
 
-## 7. Rules of thumb
+## 5. What this suite deliberately leaves out
+
+The repo previously carried the full pyramid; this practice keeps only the
+unit tier. What was cut, and the gap each cut opens:
+
+```
+        ╱  few  ╲        integration — slow, broad, catches wiring      (removed)
+      ╱─────────╲
+    ╱   slice    ╲       @WebMvcTest — the HTTP contract                (removed)
+  ╱───────────────╲
+ ╱   unit (10)     ╲     fast, narrow, catches logic                    (kept)
+```
+
+- **Controller slice tests** (`@WebMvcTest` + `MockMvc`): proved that
+  `?sortBy=pe` became `SortBy.PE`, that bad input returned 400, that
+  exceptions mapped to 404/503 problem details. Without them, the HTTP
+  contract — status codes, JSON field names, validation — is unverified.
+- **Provider tests** (MockWebServer): proved the Finnhub client survives
+  HTTP 500, timeouts, missing JSON fields and rate limits. That error
+  handling is now the biggest untested surface in the codebase.
+- **Integration tests** (`@SpringBootTest`): proved the pieces are *wired*
+  — that the real chain controller→service→provider connects, and that a
+  cold-cache outage really surfaces as a 503 over HTTP. Unit tests
+  structurally cannot catch a missing bean or a broken binding.
+- **The smoke test** (`contextLoads`): one empty test that failed if the
+  Spring context couldn't start. Highest value per line of code in the old
+  suite.
+
+For a unit-testing practice this scope is correct. For a shipping project,
+the pyramid exists because each tier catches a class of bug the others
+cannot — all of it is one `git log` away.
+
+---
+
+## 6. Rules of thumb
 
 - **One behaviour per test**, named as a sentence about that behaviour.
-- **Assert on values, not on implementation** — unless the interaction *is*
-  the requirement (`verify(times(1))` after a rate limit).
+- **Assert on values, not on implementation** — verify interactions only
+  when the interaction *is* the requirement.
 - **No `sleep`, no real clock, no network, no random, no dependence on test
   order.** Any of those is a future flaky failure.
 - **Test the boundaries**, not the happy path.
 - **A failing test should tell you what broke from its name alone.**
-- **Write the test first when fixing a bug** — it should fail, then pass. That
-  proves the test actually detects the bug.
+- **Write the test first when fixing a bug** — it should fail, then pass.
+  That proves the test actually detects the bug.
 - **Coverage finds gaps; it does not measure quality.**
 
 ---

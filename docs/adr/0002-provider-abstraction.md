@@ -82,5 +82,8 @@ of screening a configured list, not an error.
   `200 OK` and `{}`, reports market cap in millions, and does not document its
   metric field names. All of that is handled inside `FinnhubStockProvider` and
   invisible above it.
-- `FinnhubStockProviderTest` can test the client in isolation against a local
-  `MockWebServer`, covering HTTP 500, HTTP 429, timeouts and malformed JSON.
+- The client can be tested in isolation against a local `MockWebServer`,
+  covering HTTP 500, HTTP 429, timeouts and malformed JSON. (The current suite
+  is trimmed to `StockService` unit tests and full-stack integration tests that
+  mock this interface, so no such client test ships today — but the seam keeps
+  one cheap to add.)

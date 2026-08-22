@@ -55,8 +55,8 @@ There is no sleep, no tolerance window, and no possibility of a load-dependent
 failure. The test asserts the *rule* — expiry triggers a refetch — rather than
 observing a side effect of real elapsed time.
 
-The same clock gives `FinnhubStockProviderTest` a fixed `lastUpdated`, so the
-mapping test can assert an exact value instead of a range.
+The same technique gives any provider mapping test a fixed `lastUpdated`, so it
+can assert an exact value instead of a range.
 
 ## Consequences
 
